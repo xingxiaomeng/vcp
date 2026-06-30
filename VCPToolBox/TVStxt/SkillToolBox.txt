@@ -1,0 +1,22 @@
+# VCP Skill 技能库工具箱
+SkillBridge 在启动时扫描 `Plugin/SkillBridge/SKILL/` 下全部技能的 `SKILL.md` 描述，生成可折叠索引注入系统提示词。
+当用户任务与某技能描述匹配时，**必须先读取完整 SKILL.md**，再按其中工作流执行。
+
+## 技能目录（语义折叠索引）
+{{VCPSkillBridge}}
+
+## 如何加载技能正文
+使用 FileOperator 读取索引中给出的 SKILL.md 路径。复杂任务建议落墨留痕：
+
+<<<[TOOL_REQUEST]>>>
+maid:「始」你的名字「末」,
+tool_name:「始」FileOperator「末」,
+command:「始」ReadFile「末」,
+filePath:「始」D:\VCP\vcp\VCPToolBox\Plugin\SkillBridge\SKILL\frontend-dev\SKILL.md「末」,
+ink:「始」mark_history「末」
+<<<[END_TOOL_REQUEST]>>>
+
+说明：
+- 将 `filePath` 替换为索引里对应 Skill 的路径
+- 技能目录下还有 `references/`、`scripts/`、`templates/` 等子资源，按 SKILL.md 路由表按需继续 ReadFile
+- 文档生成类技能（docx/pdf/xlsx/pptx）通常需要先读 SKILL.md 再调用其 scripts

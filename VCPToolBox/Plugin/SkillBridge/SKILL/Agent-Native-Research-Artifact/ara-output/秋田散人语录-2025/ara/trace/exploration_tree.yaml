@@ -1,0 +1,121 @@
+# Exploration Tree: 秋田散人的思想路径
+
+tree:
+  - id: N01
+    type: question
+    title: "技术人在加密世界中的位置是什么？"
+    provenance: user
+    timestamp: "2021-2025"
+    description: "根问题——加密世界对技术人意味着什么？"
+    status: resolved
+    support_level: explicit
+    children:
+      - id: N02
+        type: decision
+        title: "身份转变：从开发者到企业主"
+        provenance: user
+        timestamp: "2023"
+        choice: "用企业家标准要求自己——管钱和亏钱都是自己"
+        alternatives: ["继续作为开发者受雇于人（放弃了直接参与自由贸易的机会）"]
+        status: resolved
+        support_level: explicit
+        children:
+          - id: N03
+            type: experiment
+            title: "BRC20搬砖（OKX无API期）"
+            provenance: user
+            timestamp: "2023"
+            result: "网页抓包手撸接口；半年后开放API时机会已被瓜分完"
+            status: resolved
+            support_level: explicit
+          - id: N04
+            type: experiment
+            title: "比特币产业套利"
+            provenance: user
+            timestamp: "2023"
+            result: "把签名库交给技术伙伴写，自己专注挖掘交易链路"
+            status: resolved
+            support_level: explicit
+      - id: N05
+        type: dead_end
+        title: "在线扑克——公平竞争的陷阱"
+        provenance: user
+        timestamp: "2022-2023"
+        hypothesis: "可以把扑克作为加密低谷期的替代收入"
+        failure_mode: "现代线上扑克极致内卷，没有额外social EV的局很难长期有赢面"
+        lesson: "创业者不把精力花在任何公平游戏上，只打非对称战役"
+        status: resolved
+        support_level: explicit
+      - id: N06
+        type: decision
+        title: "跨系统套利思维取代单一系统竞争"
+        provenance: user
+        timestamp: "2021"
+        choice: "同一经济系统内部套利空间有限；跨链/CEX-DEX/跨境/跨行业/跨周期才是持续优势"
+        alternatives: ["仅在DEX-DEX或CEX-CEX之间套利（卷得厉害，长期负EV）"]
+        status: resolved
+        support_level: explicit
+        children:
+          - id: N07
+            type: experiment
+            title: "火币USDT人民币场外脱锚套利"
+            provenance: user
+            timestamp: "2021"
+            result: "2021年中国清退挖矿期间，火币USDT人民币场外价格跌至0.8-0.9美元（折价率10%-20%）。套利路径：CNY -> 火币USDT -> 链上USDT -> USD -> 返回在岸人民币。通过跨境资金流动锁定人民币计价利润，同一笔资金可无限次滚动直到价差被抹平。"
+            status: resolved
+            support_level: explicit
+          - id: N08
+            type: experiment
+            title: "Sui特殊时点套利"
+            provenance: user
+            timestamp: "2024"
+            result: "守株待兔，赚钱效率极端可观"
+            status: resolved
+            support_level: explicit
+      - id: N09
+        type: decision
+        title: "自建信息情报系统取代主流新闻"
+        provenance: user
+        timestamp: "2023"
+        choice: "建立个性化爬虫和监控系统，监听冷门信源"
+        alternatives: ["跟随主流新闻软件做交易（不够快、不够广、不够细，长期亏钱）"]
+        status: resolved
+        support_level: explicit
+        children:
+          - id: N10
+            type: dead_end
+            title: "主流新闻软件的不足"
+            provenance: user
+            timestamp: "2023"
+            hypothesis: "付费新闻可以获取足够快的交易信号"
+            failure_mode: "信息传到主流用户时已被price in；filter不足导致无法专注"
+            lesson: "信息工具必须足够广、快、个性化"
+            status: resolved
+            support_level: explicit
+      - id: N11
+        type: decision
+        title: "逐仓哲学取代全仓"
+        provenance: user
+        timestamp: "2022-2023"
+        choice: "控制单一仓位保证金大小，爆仓=止损"
+        alternatives: ["全仓统一保证金（资金效率高但风险不可控）"]
+        status: resolved
+        support_level: explicit
+      - id: N12
+        type: decision
+        title: "对Polymarket的定位：真相机器"
+        provenance: user
+        timestamp: "2024"
+        choice: "预测市场是未来全球碎片化信息价值枢纽"
+        alternatives: ["仅将Polymarket视为赌场（低估了其信息基础设施价值）"]
+        status: resolved
+        support_level: explicit
+        children:
+          - id: N13
+            type: experiment
+            title: "Polymarket尾盘扫货"
+            provenance: user
+            timestamp: "2024"
+            result: "尾盘策略赚小费、流动性费用、心理补偿、智商税"
+            status: resolved
+            support_level: explicit

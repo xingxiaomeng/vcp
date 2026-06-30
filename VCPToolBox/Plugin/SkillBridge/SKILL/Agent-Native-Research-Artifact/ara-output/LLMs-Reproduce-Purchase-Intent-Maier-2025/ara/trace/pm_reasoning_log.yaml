@@ -1,0 +1,9 @@
+entries:
+  - turn: "2026-06-13_001#1"
+    notes:
+      - "Paper: Maier et al. (2025), arXiv:2510.08338v3. Empirical + methodological paper on SSR."
+      - "Notable: 'LLMs Reproduce Human Purchase Intent via Semantic Similarity' — 4MB PDF with 35+ figures. Only 1 summary table (Table 1) transcribed as evidence; paper is figure-heavy."
+      - "Claims structure: C01-C07. C06 (relevance generalization) and C07 (temperature trade-off) marked as 'hypothesis' because evidence is exploratory/limited (single experiment for C06; Fig 32 for C07)."
+      - "Experiments E01-E09 cover all key studies. E09 references temperature scan (Fig 32) — borderline case for 'experiment' classification but included as it tests a specific claim."
+      - "Environment: code available at GitHub (pymc-labs/semantic-similarity-rating); paper uses proprietary survey data from Colgate-Palmolive (not publicly available)."
+      - "No constraints.md L09-L10 needed beyond the 9 listed."

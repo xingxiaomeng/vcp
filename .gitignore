@@ -1,0 +1,62 @@
+# ===== 密钥与本地配置（勿入库）=====
+config.env
+**/config.env
+!**/config.env.example
+.env
+.env.local
+.env.*.local
+
+# ===== 用户数据 =====
+VCPChat/AppData/
+**/AppData/
+
+# ===== 依赖与运行时（可本地重装）=====
+**/node_modules/
+runtimes/
+
+# vcpkg 为第三方 C++ 包管理器，体积大，请本地 clone 安装
+vcpkg/
+
+# ===== Rust / 原生构建 =====
+**/target/
+**/Cargo.lock
+rust_audio_engine/.cargo/
+
+# ===== 数据库与日志 =====
+*.db
+*.sqlite
+*.sqlite-*
+logs/
+**/*.log
+
+# ===== 大型二进制 =====
+*.exe
+
+# ===== 插件缓存与运行时数据 =====
+Plugin/**/dailyhot_cache.md
+Plugin/**/weather_cache.*
+Plugin/**/city_cache.txt
+Plugin/**/code.bin
+Plugin/**/vector_cache.json
+VectorStore/
+DebugLog/
+
+# ===== IDE / OS =====
+.DS_Store
+Thumbs.db
+.vscode/
+**/.cursor/
+
+# ===== 媒体生成输出 =====
+image/fluxgen/
+image/bilibili/
+image/通用表情包/*
+!image/通用表情包/阿库娅-一脸智障.jpg
+!image/通用表情包/阿库娅-智慧的眼神.jpg
+
+# ===== 其他 =====
+**/reports/
+WebIndexTTS2/tmp-output/
+loudness_cache.db*
+vendor/LibreHardwareMonitor/*
+!vendor/LibreHardwareMonitor/README.md

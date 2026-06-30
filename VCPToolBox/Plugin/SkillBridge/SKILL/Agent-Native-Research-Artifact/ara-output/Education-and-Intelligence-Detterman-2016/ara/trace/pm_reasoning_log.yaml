@@ -1,0 +1,8 @@
+entries:
+  - turn: "2026-06-13_001#1"
+    notes:
+      - "Paper: Detterman (2016), review/opinion piece, no original data."
+      - "Compiler executed: 4-stage epistemic chain → file generation → coverage check → fix"
+      - "Note: exploration_tree.yaml and evidence files failed to persist on first write; rewritten"
+      - "Seal Level 1: mandatory-core dirs and files present; cross-layer binding OK; 1 known limitation (no PNG screenshots)"
+      - "This compilation is complete."

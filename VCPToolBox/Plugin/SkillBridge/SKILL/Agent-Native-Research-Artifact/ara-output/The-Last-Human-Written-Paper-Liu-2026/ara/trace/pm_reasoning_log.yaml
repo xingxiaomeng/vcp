@@ -1,0 +1,15 @@
+entries:
+  - turn: "2026-06-13_001#1"
+    notes:
+      - "This paper is self-referential: it defines ARA, and we are using the ARA Compiler to compile it."
+      - "Paper is large (46 pages, 4.62 MB). Claims cover 16 items; experiments cover 10."
+      - "This paper's own artifact (described in §A.3) contains 94 exploration nodes and 38 sessions; our compiled ARA logically reconstructs a representative subset."
+      - "Key nuance: C06 shows failure traces can constrain capable agents — a finding relevant to how this very compilation should be used."
+  - turn: "2026-06-13_002#2"
+    notes:
+      - "Coverage check round 2: 4 additions made."
+      - "1. §A.3 self-referential artifact example — referenced in evidence/README.md as T25-T30."
+      - "2. pm_reasoning_log.yaml — this entry added (session continuity)."
+      - "3. evidence/README.md — added Fig 14, Fig 15 (Sonnet 4.5 trajectories), Table 14 (per-paper detection matrix), and §A.3 self-ref entries."
+      - "4. info: section-by-section coverage table included in ARA documentation."
+      - "The paper itself is the best example of an ARA: its §A.3 shows real claims, heuristics, exploration nodes, and session logs."

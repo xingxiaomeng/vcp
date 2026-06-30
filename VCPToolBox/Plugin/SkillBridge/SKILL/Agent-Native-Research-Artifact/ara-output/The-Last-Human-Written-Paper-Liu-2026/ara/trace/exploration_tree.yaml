@@ -1,0 +1,174 @@
+# Exploration Tree: The Last Human-Written Paper (Liu et al., 2026)
+
+tree:
+  - id: N01
+    type: question
+    title: "Can the structural costs of narrative publication be eliminated?"
+    provenance: user
+    timestamp: "2026-03-09"
+    description: "Root question — can we design a research artifact format that preserves what PDFs discard?"
+    status: resolved
+    support_level: explicit
+    children:
+      - id: N02
+        type: decision
+        title: "Identify two structural taxes: Storytelling Tax and Engineering Tax"
+        provenance: user
+        timestamp: "2026-03-09"
+        choice: "Formalize the two costs of narrative compilation as distinct, quantifiable taxes on downstream consumers"
+        alternatives: ["Single unified 'reproducibility gap' framing", "Focus only on engineering issues"]
+        evidence: [E01, E02]
+        status: resolved
+        support_level: explicit
+      - id: N03
+        type: decision
+        title: "Adopt four-layer architecture"
+        provenance: user
+        timestamp: "2026-03-09"
+        choice: "Four orthogonal layers: Cognitive (/logic), Physical (/src), Exploration Graph (/trace), Evidence (/evidence)"
+        alternatives: ["Two-layer (logic + code only)", "Three-layer (combine trace and evidence)", "Flat structured document"]
+        evidence: [E06, E07]
+        status: resolved
+        support_level: explicit
+        children:
+          - id: N04
+            type: experiment
+            title: "PaperBench understanding eval: 93.7% vs. 72.4%"
+            provenance: user
+            timestamp: "2026-03-17"
+            result: "ARA wins +21.3% overall; +14.8% fidelity, +24.8% config, +65.7% failure knowledge"
+            status: resolved
+            support_level: explicit
+          - id: N05
+            type: experiment
+            title: "PaperBench reproduction eval: 64.4% vs. 57.4%"
+            provenance: user
+            timestamp: "2026-03-17"
+            result: "ARA wins +7.0%; advantage grows with difficulty"
+            status: resolved
+            support_level: explicit
+      - id: N06
+        type: dead_end
+        title: "Baseline won self-expansion — ARA agent fabricated results"
+        provenance: user
+        timestamp: "2026-03-19"
+        hypothesis: "ARA would consistently beat baseline on all papers"
+        failure_mode: "On self-expansion, ARA agent fabricated identical accuracy values across all configurations"
+        lesson: "ARA reduces but does not eliminate hallucinated results. Blind judges essential."
+        status: resolved
+        support_level: explicit
+      - id: N07
+        type: decision
+        title: "Implement Live Research Manager as agent skill"
+        provenance: user
+        timestamp: "2026-03-12"
+        choice: "A silent, at-session-boundary pipeline (Context Harvester → Event Router → Maturity Tracker)"
+        alternatives: ["Custom SDK/infrastructure (rejected: framework-dependent)", "Hand-authoring burden (rejected: defeats purpose)"]
+        evidence: [E07]
+        status: resolved
+        support_level: explicit
+      - id: N08
+        type: decision
+        title: "Implement ARA Compiler as agent skill with 4-stage pipeline"
+        provenance: user
+        timestamp: "2026-03-12"
+        choice: "Top-down generation with in-loop Seal Level 1 validation"
+        alternatives: ["Bottom-up extraction (rejected: loses cognitive structure)", "Single-pass generation without validation loop"]
+        evidence: [E06]
+        status: resolved
+        support_level: explicit
+      - id: N09
+        type: dead_end
+        title: "First-iteration pass rate is 0/30 — Level 1 is non-trivial"
+        provenance: user
+        timestamp: "2026-03-20"
+        hypothesis: "Compiler would produce passing ARAs on first attempt"
+        failure_mode: "0/30 passed first iteration; dangling references (42%) and missing schema fields (31%) dominate"
+        lesson: "Level 1 as in-loop feedback turned validation from post-hoc report to actionable fix guidance"
+        status: resolved
+        support_level: explicit
+      - id: N10
+        type: decision
+        title: "Three-level ARA Seal design"
+        provenance: user
+        timestamp: "2026-03-20"
+        choice: "Level 1 (Structural) → Level 2 (Rigor) → Level 3 (Reproduction), with each gating the next"
+        alternatives: ["Single unified score", "Human-only review (rejected: doesn't scale)"]
+        evidence: [E08, E09]
+        status: resolved
+        support_level: explicit
+        children:
+          - id: N11
+            type: experiment
+            title: "Rigor Auditor mutation benchmark"
+            provenance: user
+            timestamp: "2026-04-01"
+            result: "100% detection of 3/5 injection types; 91% of missing falsifications; 22% of orphans"
+            status: resolved
+            support_level: explicit
+          - id: N12
+            type: dead_end
+            title: "Rigor Auditor has grade inflation issue"
+            provenance: user
+            timestamp: "2026-04-01"
+            hypothesis: "LLM-as-judge would produce calibrated scores"
+            failure_mode: "17/23 ARAs had inflated grades; finding-score decoupling observed"
+            lesson: "LLMs should generate findings; overall verdict computed deterministically"
+            status: resolved
+            support_level: explicit
+      - id: N13
+        type: question
+        title: "Do failure traces accelerate or constrain extension?"
+        provenance: user
+        timestamp: "2026-03-25"
+        description: "The core tension: preserved history helps but may bound creativity"
+        status: resolved
+        support_level: explicit
+        children:
+          - id: N14
+            type: experiment
+            title: "RE-Bench extension eval: 5 tasks"
+            provenance: user
+            timestamp: "2026-04-10"
+            result: "ARA reaches first move earlier on all 5; ends ahead on 3/5"
+            status: resolved
+            support_level: explicit
+          - id: N15
+            type: dead_end
+            title: "ARA lost on triton_cumsum and restricted_mlm under Sonnet 4.6"
+            provenance: user
+            timestamp: "2026-04-10"
+            hypothesis: "Trace-recommended designs would always outperform unguided exploration"
+            failure_mode: "Paper agent invented int8 compression and deep single-architecture training"
+            lesson: "Trace value scales with gap between documented playbook and agent's own inventiveness"
+            status: resolved
+            support_level: explicit
+          - id: N16
+            type: pivot
+            title: "Weaker base (Sonnet 4.5) inverts the comparison"
+            provenance: user
+            timestamp: "2026-04-10"
+            from: "ARA leads on Sonnet 4.6 triton and mlm"
+            to: "ARA wins on Sonnet 4.5 triton and mlm"
+            trigger: "Sonnet 4.5 lacks bandwidth to invent creative alternatives"
+            status: resolved
+            support_level: explicit
+      - id: N17
+        type: decision
+        title: "Propose (Human+AI)^2 network for future work"
+        provenance: user
+        timestamp: "2026-04-15"
+        choice: "Fork/diff/merge research as future vision"
+        alternatives: ["Claim near-term deployability (rejected: not validated)"]
+        evidence: [E07]
+        status: resolved
+        support_level: explicit
+        children:
+          - id: N18
+            type: question
+            title: "Which production prerequisites remain?"
+            provenance: user
+            timestamp: "2026-04-15"
+            description: "Adversarial robustness, schema evolution, lineage mechanisms"
+            status: resolved
+            support_level: explicit

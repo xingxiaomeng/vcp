@@ -1,0 +1,239 @@
+# Exploration Tree: Education and Intelligence (Detterman, 2016)
+
+tree:
+  - id: N01
+    type: question
+    title: "What is the actual distribution of variance in academic achievement?"
+    provenance: user
+    timestamp: "2016"
+    description: "Root question: who or what determines student achievement?"
+    status: resolved
+    support_level: explicit
+    children:
+      - id: N02
+        type: decision
+        title: "Adopt variance decomposition approach"
+        provenance: user
+        timestamp: "2016"
+        choice: "Partition total variance into school-associated and student-associated components"
+        evidence: [E01, E02, E03, E04, E05, E06, E07]
+        status: resolved
+        support_level: explicit
+        children:
+          - id: N03
+            type: experiment
+            title: "Thought experiment"
+            provenance: user
+            timestamp: "2016"
+            description: "50 teachers by quality vs 50 classes by mean IQ"
+            result: "Teacher correlation ≤ 0.32 (10% var); student ability ≤ 0.95 (90% var)"
+            status: resolved
+            support_level: explicit
+          - id: N04
+            type: dead_end
+            title: "No field experiment with random teacher assignment"
+            provenance: user
+            timestamp: "2016"
+            hypothesis: "Thought experiment is best available approximation"
+            failure_mode: "Logistical impossibility of random teacher assignment"
+            lesson: "Chingos & Whitehurst (2014) closest real-world analogue"
+            status: resolved
+            support_level: explicit
+          - id: N05
+            type: experiment
+            title: "Coleman Report (1966)"
+            provenance: user
+            timestamp: "1966"
+            result: "Schools 10-20%, teachers ~1%, students 80-90%"
+            status: resolved
+            support_level: explicit
+          - id: N06
+            type: dead_end
+            title: "Large school effects expected but not found"
+            provenance: user
+            timestamp: "1966"
+            hypothesis: "School quality would explain most variance"
+            failure_mode: "Found opposite — within-school variance > between-school"
+            lesson: "Conventional wisdom falsified"
+            status: resolved
+            support_level: explicit
+          - id: N07
+            type: experiment
+            title: "Warsaw Natural Experiment (1978)"
+            provenance: user
+            timestamp: "1978"
+            result: "Between-school variance: 2.1%; student variance: 98%"
+            status: resolved
+            support_level: explicit
+          - id: N08
+            type: decision
+            title: "Even school effects are partly due to student distribution"
+            provenance: user
+            timestamp: "1978"
+            choice: "Random student distribution shrinks school variance further"
+            status: resolved
+            support_level: explicit
+          - id: N09
+            type: experiment
+            title: "College effects: Angoff & Johnson (1990)"
+            provenance: user
+            timestamp: "1990"
+            result: "Student characteristics: 93% of GRE var; institution ≤ 7%"
+            status: resolved
+            support_level: explicit
+          - id: N10
+            type: dead_end
+            title: "Why compete for 'best' colleges?"
+            provenance: user
+            timestamp: "2016"
+            hypothesis: "Social network/signaling benefits"
+            failure_mode: "Dale & Krueger: no earnings boost after ability control"
+            lesson: "Credentialing explains prestige premium"
+            status: resolved
+            support_level: explicit
+          - id: N11
+            type: experiment
+            title: "Twin study: Byrne et al. (2010)"
+            provenance: user
+            timestamp: "2010"
+            result: "Teacher effects ≤ 8%"
+            status: resolved
+            support_level: explicit
+          - id: N12
+            type: experiment
+            title: "Chingos & Whitehurst (2014)"
+            provenance: user
+            timestamp: "2014"
+            result: "Teachers: 3%; school total: 9.2%; student: 90.8%"
+            status: resolved
+            support_level: explicit
+  - id: N13
+    type: question
+    title: "What student characteristic accounts for most variance?"
+    provenance: user
+    timestamp: "2016"
+    status: resolved
+    support_level: explicit
+    children:
+      - id: N14
+        type: experiment
+        title: "Deary et al. (2007)"
+        provenance: user
+        timestamp: "2007"
+        result: "r = 0.81 between g factors"
+        status: resolved
+        support_level: explicit
+      - id: N15
+        type: experiment
+        title: "Kaufman et al. (2012)"
+        provenance: user
+        timestamp: "2012"
+        result: "Mean r = 0.83 (0.77-0.94)"
+        status: resolved
+        support_level: explicit
+      - id: N16
+        type: experiment
+        title: "Krapohl et al. (2014)"
+        provenance: user
+        timestamp: "2014"
+        result: "Intelligence alone: 34% GCSE var; +8 traits: only 45%"
+        status: resolved
+        support_level: explicit
+      - id: N17
+        type: dead_end
+        title: "8 other traits share variance with intelligence"
+        provenance: user
+        timestamp: "2014"
+        hypothesis: "Other traits matter but are mediated by intelligence"
+        failure_mode: "11% gain from adding 8 traits"
+        lesson: "Intelligence dominates student characteristics"
+        status: resolved
+        support_level: explicit
+  - id: N18
+    type: question
+    title: "Does intelligence cause achievement or vice versa?"
+    provenance: user
+    timestamp: "2016"
+    status: resolved
+    support_level: explicit
+    children:
+      - id: N19
+        type: experiment
+        title: "Crano et al. (1972) cross-lagged"
+        provenance: user
+        timestamp: "1972"
+        result: "Intelligence → Achievement significant; reverse not"
+        status: resolved
+        support_level: explicit
+      - id: N20
+        type: experiment
+        title: "Watkins et al. (2007) replication"
+        provenance: user
+        timestamp: "2007"
+        result: "Replicated with latent variables"
+        status: resolved
+        support_level: explicit
+      - id: N21
+        type: experiment
+        title: "Mosing et al. (2014) music twin study"
+        provenance: user
+        timestamp: "2014"
+        result: "Practice does not cause ability after genetic control"
+        status: resolved
+        support_level: explicit
+      - id: N22
+        type: pivot
+        title: "Flynn Effect qualification"
+        provenance: user
+        timestamp: "2016"
+        from: "Environment does not affect intelligence"
+        to: "Deprivation can reduce; sophistication can boost; fluid g stable"
+        trigger: "Flynn 1984; Ceci 1991"
+        status: resolved
+        support_level: explicit
+  - id: N23
+    type: question
+    title: "What should be done to improve education?"
+    provenance: user
+    timestamp: "2016"
+    status: open
+    support_level: explicit
+    children:
+      - id: N24
+        type: decision
+        title: "Research should target the 90% student variance"
+        provenance: user
+        timestamp: "2016"
+        choice: "Understand intelligence infrastructure (genes→brain→behavior)"
+        status: resolved
+        support_level: explicit
+      - id: N25
+        type: dead_end
+        title: "Teacher blaming is counterproductive"
+        provenance: user
+        timestamp: "2016"
+        hypothesis: "Teachers can only affect ~10%"
+        failure_mode: "50+ years of blaming with no change"
+        lesson: "Appreciate teachers within bounded influence"
+        status: resolved
+        support_level: explicit
+      - id: N26
+        type: dead_end
+        title: "Current teacher training is ineffective"
+        provenance: user
+        timestamp: "2015"
+        hypothesis: "Training costs $18K/yr; 5yr plateau"
+        failure_mode: "Expensive but limited impact"
+        lesson: "Even maximum teacher quality has bounded impact"
+        status: resolved
+        support_level: explicit
+      - id: N27
+        type: pivot
+        title: "From blame to understanding intelligence"
+        provenance: user
+        timestamp: "2016"
+        from: "Blaming teachers"
+        to: "Understanding intelligence infrastructure"
+        trigger: "Decades of failed reform"
+        status: resolved
+        support_level: explicit

@@ -1,0 +1,17 @@
+{
+  "updatedAt": "2026-06-11T12:33:56.771Z",
+  "skills": {
+    "compiler": {
+      "installedAt": "2026-06-13T07:08:52.135Z",
+      "source": "@ara-commons/ara-skills"
+    },
+    "research-manager": {
+      "installedAt": "2026-06-13T07:08:52.137Z",
+      "source": "@ara-commons/ara-skills"
+    },
+    "rigor-reviewer": {
+      "installedAt": "2026-06-13T07:08:52.139Z",
+      "source": "@ara-commons/ara-skills"
+    }
+  }
+}

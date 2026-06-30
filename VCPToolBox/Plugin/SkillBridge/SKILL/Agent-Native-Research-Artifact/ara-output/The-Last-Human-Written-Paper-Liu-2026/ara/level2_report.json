@@ -1,0 +1,46 @@
+{
+  "artifact": "The-Last-Human-Written-Paper-Liu-2026",
+  "overall": {
+    "grade": "Accept",
+    "mean_score": 4.3,
+    "one_line_summary": "Coherent logical architecture with strong evidence binding; minor calibration and falsification softness prevent Strong Accept."
+  },
+  "dimensions": {
+    "D1_evidence_relevance": { "score": 5 },
+    "D2_falsifiability": { "score": 4 },
+    "D3_scope_calibration": { "score": 4 },
+    "D4_argument_coherence": { "score": 5 },
+    "D5_exploration_integrity": { "score": 4 },
+    "D6_methodological_rigor": { "score": 4 }
+  },
+  "findings": [
+    {
+      "finding_id": "F01",
+      "severity": "minor",
+      "target_entity": "C03",
+      "observation": "C03 over-attributes improvement to four-layer structure when evidence tests full protocol including tools.",
+      "suggestion": "Narrow to the ARA protocol (layers plus tools) or add ablation experiment."
+    },
+    {
+      "finding_id": "F02",
+      "severity": "minor",
+      "target_entity": "C01",
+      "observation": "80 percent threshold asserted without justification.",
+      "suggestion": "Ground in PaperBench data or remove numeric threshold."
+    },
+    {
+      "finding_id": "F03",
+      "severity": "minor",
+      "target_entity": "E03, E04",
+      "observation": "All evaluations use Claude only. No GPT or Gemini replication.",
+      "suggestion": "Add cross-model replication on subset of tasks."
+    },
+    {
+      "finding_id": "F04",
+      "severity": "suggestion",
+      "target_entity": "E05",
+      "observation": "Four engineering workarounds required for stable trajectories.",
+      "suggestion": "Run sensitivity analysis quantifying confound impact."
+    }
+  ]
+}

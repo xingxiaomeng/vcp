@@ -1,0 +1,144 @@
+# Exploration Tree: LLMs Reproduce Human Purchase Intent (Maier et al., 2025)
+
+tree:
+  - id: N01
+    type: question
+    title: "Can LLMs serve as valid synthetic consumers for concept testing?"
+    provenance: user
+    timestamp: "2025"
+    description: "Root question — can LLM-based synthetic respondents replace or augment human panels?"
+    status: resolved
+    support_level: explicit
+    children:
+      - id: N02
+        type: dead_end
+        title: "Direct Likert elicitation fails — narrow distributions"
+        provenance: user
+        timestamp: "2025"
+        hypothesis: "Asking LLMs directly for a Likert rating would work"
+        failure_mode: "KS similarity 0.26-0.39; never uses '1' or '5'"
+        lesson: "The failure is in the elicitation method, not the LLMs themselves"
+        status: resolved
+        support_level: explicit
+      - id: N03
+        type: pivot
+        title: "From direct numeric to textual elicitation"
+        provenance: user
+        timestamp: "2025"
+        from: "Direct Likert rating (DLR)"
+        to: "Free-text response → embedding-based mapping (SSR)"
+        trigger: "Observation that textual responses contain richer information and allow more flexible mapping"
+        status: resolved
+        support_level: explicit
+      - id: N04
+        type: experiment
+        title: "FLR baseline — text then LLM-rating"
+        provenance: user
+        timestamp: "2025"
+        result: "KS ≈ 0.72 (GPT-4o); improved over DLR but not enough"
+        status: resolved
+        support_level: explicit
+      - id: N05
+        type: experiment
+        title: "SSR — text then embedding-mapped distribution"
+        provenance: user
+        timestamp: "2025"
+        result: "KS ≈ 0.88 (GPT-4o); ρ ≈ 90% — simultaneous success"
+        status: resolved
+        support_level: explicit
+      - id: N06
+        type: question
+        title: "How important are demographic attributes?"
+        provenance: user
+        timestamp: "2025"
+        description: "Does persona conditioning improve synthetic survey quality?"
+        status: resolved
+        support_level: explicit
+        children:
+          - id: N07
+            type: experiment
+            title: "Full demographics vs. no demographics"
+            provenance: user
+            timestamp: "2025"
+            result: "With demos: ρ ≈ 90%, KS ≈ 0.80-0.88. Without: ρ ≈ 50%, KS ≈ 0.91"
+            status: resolved
+            support_level: explicit
+          - id: N08
+            type: decision
+            title: "Demographics are essential for ranking, optional for distribution"
+            provenance: user
+            timestamp: "2025"
+            choice: "Use full demographics for best overall performance, despite slight distributional cost"
+            alternatives: ["No demographics if only distributional similarity matters (risk: losing ranking signal)"]
+            status: resolved
+            support_level: explicit
+      - id: N09
+        type: question
+        title: "How does SSR compare to supervised ML?"
+        provenance: user
+        timestamp: "2025"
+        description: "Can zero-shot LLM outperforms models with training data access?"
+        status: resolved
+        support_level: explicit
+        children:
+          - id: N10
+            type: experiment
+            title: "LightGBM baseline (300 iterations)"
+            provenance: user
+            timestamp: "2025"
+            result: "ρ ≈ 65% vs. SSR's 88%; KS = 0.80 vs. SSR's 0.88"
+            status: resolved
+            support_level: explicit
+          - id: N11
+            type: decision
+            title: "Zero-shot LLM > supervised ML for this task"
+            provenance: user
+            timestamp: "2025"
+            choice: "LLM semantic understanding of product descriptions adds value beyond structured features"
+            status: resolved
+            support_level: explicit
+      - id: N12
+        type: question
+        title: "Can SSR generalize beyond purchase intent?"
+        provenance: user
+        timestamp: "2025"
+        status: open
+        support_level: explicit
+        children:
+          - id: N13
+            type: experiment
+            title: "Relevance question — Gem-2f"
+            provenance: user
+            timestamp: "2025"
+            result: "ρ = 82% (SSR), KS = 0.81"
+            status: resolved
+            support_level: explicit
+          - id: N14
+            type: pivot
+            title: "SSR generalizes but may underperform FLR on some questions"
+            provenance: user
+            timestamp: "2025"
+            from: "SSR outperforms FLR on purchase intent"
+            to: "FLR outperforms SSR on relevance (ρ 91% vs 82%)"
+            trigger: "Empirical comparison on relevance question"
+            status: resolved
+            support_level: explicit
+      - id: N15
+        type: decision
+        title: "SSR as plug-and-play augmentation tool"
+        provenance: user
+        timestamp: "2025"
+        choice: "Propose SSR as a low-cost baseline for synthetic consumer research, not a wholesale replacement for human panels"
+        alternatives: ["Full replacement (not recommended — needs further validation)"]
+        status: resolved
+        support_level: explicit
+      - id: N16
+        type: dead_end
+        title: "Image vs. text stimulus — small difference"
+        provenance: user
+        timestamp: "2025"
+        hypothesis: "Full concept images add significant value over text descriptions"
+        failure_mode: "Text-only mildly reduces performance but doesn't change conclusions (see E08)"
+        lesson: "Text descriptions are sufficient for most of the effect"
+        status: resolved
+        support_level: explicit
