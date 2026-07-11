@@ -18,7 +18,8 @@ function setupSidebar(app) {
         const albums = {};
         app.playlist.forEach(t => {
             const name = t.album || '未知专辑';
-            if (!albums[name]) albums[name] = { name, art: t.albumArt, tracks: [] };
+            if (!albums[name]) albums[name] = { name, art: t.albumArt || '', tracks: [] };
+            else if (!albums[name].art && t.albumArt) albums[name].art = t.albumArt;
             albums[name].tracks.push(t);
         });
         return Object.values(albums).sort((a,b) => b.tracks.length - a.tracks.length);
@@ -28,7 +29,8 @@ function setupSidebar(app) {
         const artists = {};
         app.playlist.forEach(t => {
             const name = t.artist || '未知艺术家';
-            if (!artists[name]) artists[name] = { name, art: t.albumArt, tracks: [] };
+            if (!artists[name]) artists[name] = { name, art: t.albumArt || '', tracks: [] };
+            else if (!artists[name].art && t.albumArt) artists[name].art = t.albumArt;
             artists[name].tracks.push(t);
         });
         return Object.values(artists).sort((a,b) => b.tracks.length - a.tracks.length);
@@ -55,8 +57,11 @@ function setupSidebar(app) {
             groups.forEach(g => {
                 const div = document.createElement('div');
                 div.className = 'category-item';
+                const coverCss = g.art
+                    ? (app.getAlbumArtCssUrl?.(g.art) || `url('${String(g.art).replace(/'/g, '%27')}')`)
+                    : '';
                 div.innerHTML = `
-                    <div class="cover ${view==='artists'?'artist-avatar':''}" style="${g.art ? `background-image: url('file://${g.art.replace(/\\/g, '/')}')` : ''}"></div>
+                    <div class="cover ${view==='artists'?'artist-avatar':''}" style="${coverCss ? `background-image: ${coverCss}` : ''}"></div>
                     <div class="info"><div class="name">${g.name}</div><div class="count">${g.tracks.length} 首</div></div>`;
                 div.addEventListener('click', () => {
                     app.filteredPlaylistSource = { type: view==='albums'?'album':'artist', name: g.name };

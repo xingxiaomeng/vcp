@@ -167,6 +167,232 @@ async function axiosGet(url, options = {}) {
     });
 }
 
+async function axiosRequest(method, url, options = {}) {
+    const { forceDirect, ...rest } = options;
+    const proxy = forceDirect ? null : await getAxiosProxy();
+    return axios({
+        method,
+        url,
+        ...rest,
+        proxy: proxy || false,
+    });
+}
+
+const DOWNLOAD_PARALLEL = 8;
+const DOWNLOAD_MIN_PARALLEL_SIZE = 256 * 1024; // 小于此大小不拆分
+
+async function probeDownloadMeta(url, { forceDirect, headers, timeout = 15000 } = {}) {
+    let totalSize = 0;
+    let acceptRanges = false;
+
+    try {
+        const head = await axiosRequest('head', url, {
+            forceDirect,
+            headers,
+            timeout,
+            validateStatus: () => true,
+            maxRedirects: 5,
+        });
+        if (head.status >= 200 && head.status < 400) {
+            totalSize = Number(head.headers['content-length']) || 0;
+            acceptRanges = /bytes/i.test(String(head.headers['accept-ranges'] || ''));
+        }
+    } catch (_) {}
+
+    // 部分 CDN 不支持 HEAD，用 Range 探测
+    if (!totalSize || !acceptRanges) {
+        try {
+            const probe = await axiosRequest('get', url, {
+                forceDirect,
+                headers: { ...headers, Range: 'bytes=0-0' },
+                timeout,
+                responseType: 'arraybuffer',
+                validateStatus: () => true,
+                maxRedirects: 5,
+            });
+            if (probe.status === 206) {
+                acceptRanges = true;
+                const cr = String(probe.headers['content-range'] || '');
+                const m = cr.match(/\/(\d+)\s*$/);
+                if (m) totalSize = Number(m[1]) || totalSize;
+            } else if (probe.status >= 200 && probe.status < 300) {
+                totalSize = Number(probe.headers['content-length']) || totalSize;
+            }
+        } catch (_) {}
+    }
+
+    return { totalSize, acceptRanges };
+}
+
+async function downloadSingleStream(url, destPath, { forceDirect, headers, timeout = 180000 } = {}) {
+    const response = await axiosGet(url, {
+        responseType: 'stream',
+        timeout,
+        forceDirect,
+        headers,
+        validateStatus: () => true,
+        maxRedirects: 5,
+    });
+
+    if (!(response.status >= 200 && response.status < 300)) {
+        if (response.data?.destroy) response.data.destroy();
+        throw new Error(`下载音源失败 HTTP ${response.status}`);
+    }
+
+    const contentType = String(response.headers['content-type'] || '').toLowerCase();
+    if (contentType.includes('text/html') || contentType.includes('application/json')) {
+        if (response.data?.destroy) response.data.destroy();
+        throw new Error(`音源返回了非音频内容 (${contentType || 'unknown'})`);
+    }
+
+    await new Promise((resolve, reject) => {
+        const ws = fs.createWriteStream(destPath);
+        response.data.pipe(ws);
+        ws.on('finish', resolve);
+        ws.on('error', reject);
+        response.data.on('error', reject);
+    });
+}
+
+async function downloadRangePart(url, partPath, start, end, { forceDirect, headers, timeout = 180000 } = {}) {
+    const response = await axiosGet(url, {
+        responseType: 'stream',
+        timeout,
+        forceDirect,
+        headers: {
+            ...headers,
+            Range: `bytes=${start}-${end}`,
+        },
+        validateStatus: (status) => status === 206 || status === 200,
+        maxRedirects: 5,
+    });
+
+    if (!(response.status === 206 || response.status === 200)) {
+        if (response.data?.destroy) response.data.destroy();
+        throw new Error(`分片下载失败 HTTP ${response.status} (${start}-${end})`);
+    }
+
+    await new Promise((resolve, reject) => {
+        const ws = fs.createWriteStream(partPath);
+        response.data.pipe(ws);
+        ws.on('finish', resolve);
+        ws.on('error', reject);
+        response.data.on('error', reject);
+    });
+
+    const st = await fs.stat(partPath);
+    const expected = end - start + 1;
+    // 若服务器忽略 Range 返回整文件，视为不支持并发
+    if (response.status === 200 && st.size > expected * 1.5) {
+        throw new Error('RANGE_NOT_HONORED');
+    }
+    if (response.status === 206 && st.size > 0 && st.size < expected * 0.5) {
+        throw new Error(`分片不完整 ${st.size}/${expected}`);
+    }
+}
+
+async function concatPartFiles(partPaths, destPath) {
+    try { await fs.remove(destPath); } catch (_) {}
+    const ws = fs.createWriteStream(destPath);
+    try {
+        for (const part of partPaths) {
+            await new Promise((resolve, reject) => {
+                const rs = fs.createReadStream(part);
+                rs.on('error', reject);
+                rs.on('end', resolve);
+                rs.pipe(ws, { end: false });
+            });
+        }
+    } finally {
+        await new Promise((resolve) => ws.end(resolve));
+    }
+}
+
+/**
+ * 多连接 Range 并发下载；不支持 Range 时回退单线程。
+ */
+async function downloadUrlToFile(url, destPath, options = {}) {
+    const {
+        forceDirect = false,
+        headers = {},
+        timeout = 180000,
+        parallel = DOWNLOAD_PARALLEL,
+    } = options;
+
+    const reqHeaders = {
+        'User-Agent': UA,
+        Accept: '*/*',
+        ...headers,
+    };
+    // 去掉 undefined，避免污染请求头
+    Object.keys(reqHeaders).forEach((k) => {
+        if (reqHeaders[k] == null) delete reqHeaders[k];
+    });
+
+    const meta = await probeDownloadMeta(url, { forceDirect, headers: reqHeaders });
+    const canParallel = meta.acceptRanges
+        && meta.totalSize >= DOWNLOAD_MIN_PARALLEL_SIZE
+        && parallel > 1;
+
+    if (!canParallel) {
+        await downloadSingleStream(url, destPath, {
+            forceDirect,
+            headers: reqHeaders,
+            timeout,
+        });
+        return { method: 'single', size: meta.totalSize };
+    }
+
+    const parts = Math.min(parallel, Math.max(2, Math.ceil(meta.totalSize / (512 * 1024))));
+    const chunkSize = Math.ceil(meta.totalSize / parts);
+    const tasks = [];
+    for (let i = 0; i < parts; i++) {
+        const start = i * chunkSize;
+        if (start >= meta.totalSize) break;
+        const end = Math.min(meta.totalSize - 1, start + chunkSize - 1);
+        tasks.push({ i, start, end, partPath: `${destPath}.p${i}` });
+    }
+
+    console.log(`[OnlineMusic] Parallel download x${tasks.length} (${meta.totalSize} bytes)`);
+
+    try {
+        await Promise.all(tasks.map(async (task) => {
+            try { await fs.remove(task.partPath); } catch (_) {}
+            await downloadRangePart(url, task.partPath, task.start, task.end, {
+                forceDirect,
+                headers: reqHeaders,
+                timeout,
+            });
+        }));
+
+        const partPaths = tasks.map((t) => t.partPath);
+        await concatPartFiles(partPaths, destPath);
+
+        const st = await fs.stat(destPath);
+        if (meta.totalSize > 0 && st.size < meta.totalSize * 0.95) {
+            throw new Error(`合并后大小异常 ${st.size}/${meta.totalSize}`);
+        }
+        return { method: `parallel-${partPaths.length}`, size: st.size };
+    } catch (error) {
+        // Range 不被支持或分片失败 → 回退单线程
+        console.warn(`[OnlineMusic] Parallel download fallback: ${error.message}`);
+        for (const task of tasks) {
+            try { await fs.remove(task.partPath); } catch (_) {}
+        }
+        try { await fs.remove(destPath); } catch (_) {}
+        await downloadSingleStream(url, destPath, {
+            forceDirect,
+            headers: reqHeaders,
+            timeout,
+        });
+        return { method: 'single-fallback', size: meta.totalSize };
+    } finally {
+        for (const task of tasks) {
+            try { await fs.remove(task.partPath); } catch (_) {}
+        }
+    }
+}
+
 async function loadConfig() {
     const defaults = {
         spotifyClientId: '',
@@ -244,49 +470,81 @@ function isJunkTitle(name) {
     return /(正式版|伤感版|抖音|cover|翻唱|live\s*版|伴奏)/i.test(String(name || ''));
 }
 
+// 搜索专用 keep-alive，复用 TLS 连接加速多区并发
+const itunesSearchAgent = new https.Agent({
+    keepAlive: true,
+    maxSockets: 16,
+    maxFreeSockets: 8,
+    timeout: 8000,
+});
+
+function mapItunesItem(item) {
+    return {
+        id: `itunes:${item.trackId}`,
+        provider: 'itunes',
+        title: item.trackName,
+        artist: item.artistName,
+        album: item.collectionName || '',
+        albumArt: String(item.artworkUrl100 || '').replace('100x100bb', '600x600bb'),
+        durationMs: item.trackTimeMillis || 0,
+        previewUrl: item.previewUrl || '',
+        externalUrl: item.trackViewUrl || '',
+    };
+}
+
+function mergeItunesResults(merged, seen, results, capped) {
+    for (const item of results) {
+        if (!item.trackName || !item.artistName || !item.trackId) continue;
+        const id = `itunes:${item.trackId}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        merged.push(mapItunesItem(item));
+        if (merged.length >= capped) return true;
+    }
+    return false;
+}
+
+async function fetchItunesCountry(query, country) {
+    try {
+        const response = await axios.get('https://itunes.apple.com/search', {
+            params: {
+                term: query,
+                entity: 'song',
+                limit: 200,
+                country,
+                lang: 'zh_cn',
+            },
+            timeout: 6000,
+            headers: { 'User-Agent': UA },
+            httpsAgent: itunesSearchAgent,
+            proxy: false,
+        });
+        return Array.isArray(response.data?.results) ? response.data.results : [];
+    } catch (error) {
+        if (error.code !== 'ERR_CANCELED' && error.name !== 'CanceledError') {
+            console.warn(`[OnlineMusic] iTunes search (${country}) failed:`, error.message);
+        }
+        return [];
+    }
+}
+
 async function searchItunes(query, limit = 500) {
     const capped = Math.min(Math.max(Number(limit) || 500, 1), 500);
-    const countries = ['cn', 'us', 'jp', 'tw', 'hk', 'kr', 'gb', 'sg', 'my', 'ca', 'au', 'de', 'fr'];
+    // 先打高收益区；凑满即返回，不等待慢区
+    const primary = ['cn', 'us', 'jp', 'tw', 'hk', 'kr'];
+    const secondary = ['gb', 'sg', 'my', 'ca', 'au', 'de', 'fr'];
     const seen = new Set();
     const merged = [];
 
-    for (const country of countries) {
-        if (merged.length >= capped) break;
-        try {
-            // eslint-disable-next-line no-await-in-loop
-            const response = await axios.get('https://itunes.apple.com/search', {
-                params: {
-                    term: query,
-                    entity: 'song',
-                    limit: 200, // iTunes 单次上限 200，靠多区合并凑满
-                    country,
-                    lang: 'zh_cn',
-                },
-                timeout: 12000,
-                headers: { 'User-Agent': UA },
-            });
-            const results = Array.isArray(response.data?.results) ? response.data.results : [];
-            for (const item of results) {
-                if (!item.trackName || !item.artistName || !item.trackId) continue;
-                const id = `itunes:${item.trackId}`;
-                if (seen.has(id)) continue;
-                seen.add(id);
-                merged.push({
-                    id,
-                    provider: 'itunes',
-                    title: item.trackName,
-                    artist: item.artistName,
-                    album: item.collectionName || '',
-                    albumArt: String(item.artworkUrl100 || '').replace('100x100bb', '600x600bb'),
-                    durationMs: item.trackTimeMillis || 0,
-                    previewUrl: item.previewUrl || '',
-                    externalUrl: item.trackViewUrl || '',
-                });
-                if (merged.length >= capped) break;
-            }
-        } catch (error) {
-            console.warn(`[OnlineMusic] iTunes search (${country}) failed:`, error.message);
-        }
+    const primaryResults = await Promise.all(primary.map((c) => fetchItunesCountry(query, c)));
+    for (const results of primaryResults) {
+        if (mergeItunesResults(merged, seen, results, capped)) return merged;
+    }
+    if (merged.length >= capped) return merged;
+
+    const secondaryResults = await Promise.all(secondary.map((c) => fetchItunesCountry(query, c)));
+    for (const results of secondaryResults) {
+        if (mergeItunesResults(merged, seen, results, capped)) return merged;
     }
     return merged;
 }
@@ -320,19 +578,30 @@ async function searchSpotify(query, limit = 50, config) {
     const token = await getSpotifyToken(config);
     if (!token) return [];
     const capped = Math.min(Math.max(Number(limit) || 50, 1), 500);
+    const headers = { Authorization: `Bearer ${token}`, 'User-Agent': UA };
+    const pageCount = Math.ceil(capped / 50);
+
+    // 全部分页一次并发发出（省掉「先首页再翻页」的第二轮 RTT）
+    const pages = await Promise.all(Array.from({ length: pageCount }, async (_, i) => {
+        const offset = i * 50;
+        const pageSize = Math.min(50, capped - offset);
+        try {
+            const response = await axios.get('https://api.spotify.com/v1/search', {
+                params: { q: query, type: 'track', limit: pageSize, offset },
+                headers,
+                timeout: 6000,
+                proxy: false,
+            });
+            return response.data?.tracks?.items || [];
+        } catch (error) {
+            console.warn(`[OnlineMusic] Spotify page ${offset} failed:`, error.message);
+            return [];
+        }
+    }));
+
     const seen = new Set();
     const merged = [];
-
-    for (let offset = 0; offset < capped; offset += 50) {
-        const pageSize = Math.min(50, capped - offset);
-        // eslint-disable-next-line no-await-in-loop
-        const response = await axios.get('https://api.spotify.com/v1/search', {
-            params: { q: query, type: 'track', limit: pageSize, offset },
-            headers: { Authorization: `Bearer ${token}`, 'User-Agent': UA },
-            timeout: 12000,
-        });
-        const items = response.data?.tracks?.items || [];
-        if (!items.length) break;
+    for (const items of pages) {
         for (const item of items) {
             const id = `spotify:${item.id}`;
             if (seen.has(id)) continue;
@@ -348,9 +617,8 @@ async function searchSpotify(query, limit = 50, config) {
                 previewUrl: item.preview_url || '',
                 externalUrl: item.external_urls?.spotify || '',
             });
+            if (merged.length >= capped) return merged;
         }
-        const total = Number(response.data?.tracks?.total) || 0;
-        if (offset + items.length >= total) break;
     }
     return merged;
 }
@@ -366,14 +634,17 @@ async function searchOnline(query, options = {}) {
     let results = [];
     let metaSource = 'itunes';
 
-    try {
-        const spotify = await searchSpotify(q, limit, config);
-        if (spotify.length) {
-            results = spotify;
-            metaSource = 'spotify';
+    // 未配置 Spotify 时直接走 iTunes，省掉一轮空请求
+    if (config.spotifyClientId && config.spotifyClientSecret) {
+        try {
+            const spotify = await searchSpotify(q, limit, config);
+            if (spotify.length) {
+                results = spotify;
+                metaSource = 'spotify';
+            }
+        } catch (error) {
+            console.warn('[OnlineMusic] Spotify search failed:', error.message);
         }
-    } catch (error) {
-        console.warn('[OnlineMusic] Spotify search failed:', error.message);
     }
 
     if (!results.length) {
@@ -901,38 +1172,20 @@ async function cacheResolvedMedia(resolved) {
     const forceDirect = resolved.fetchDirect === true
         || resolved.source === 'bilibili'
         || resolved.source === 'netease';
-    const response = await axiosGet(resolved.url, {
-        responseType: 'stream',
-        timeout: 180000,
+    const referer = resolved.referer
+        || (resolved.source === 'bilibili'
+            ? 'https://www.bilibili.com/'
+            : (resolved.source === 'youtube' ? 'https://www.youtube.com/' : 'https://music.163.com/'));
+
+    const dl = await downloadUrlToFile(resolved.url, tmpPath, {
         forceDirect,
         headers: {
             'User-Agent': UA,
-            Referer: resolved.referer
-                || (resolved.source === 'bilibili'
-                    ? 'https://www.bilibili.com/'
-                    : (resolved.source === 'youtube' ? 'https://www.youtube.com/' : 'https://music.163.com/')),
-            Accept: '*/*',
+            Referer: referer,
+            Origin: resolved.source === 'bilibili' ? 'https://www.bilibili.com' : undefined,
         },
-        validateStatus: () => true,
-    });
-
-    if (!(response.status >= 200 && response.status < 300)) {
-        if (response.data?.destroy) response.data.destroy();
-        throw new Error(`下载音源失败 HTTP ${response.status}`);
-    }
-
-    const contentType = String(response.headers['content-type'] || '').toLowerCase();
-    if (contentType.includes('text/html') || contentType.includes('application/json')) {
-        if (response.data?.destroy) response.data.destroy();
-        throw new Error(`音源返回了非音频内容 (${contentType || 'unknown'})`);
-    }
-
-    await new Promise((resolve, reject) => {
-        const ws = fs.createWriteStream(tmpPath);
-        response.data.pipe(ws);
-        ws.on('finish', resolve);
-        ws.on('error', reject);
-        response.data.on('error', reject);
+        timeout: 180000,
+        parallel: DOWNLOAD_PARALLEL,
     });
 
     const st = await fs.stat(tmpPath);
@@ -945,7 +1198,7 @@ async function cacheResolvedMedia(resolved) {
         throw new Error('下载内容不是有效音频（可能被版权拦截）');
     }
     await fs.move(tmpPath, filePath, { overwrite: true });
-    console.log(`[OnlineMusic] Cached ${resolved.source} -> ${filePath} (${st.size} bytes)`);
+    console.log(`[OnlineMusic] Cached ${resolved.source} -> ${filePath} (${st.size} bytes, ${dl.method})`);
     return filePath;
 }
 
