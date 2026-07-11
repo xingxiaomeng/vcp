@@ -215,17 +215,18 @@
     /**
      * 生成新闻热点挂件
      */
-    async function spawnNewsWidget() {
+    async function spawnNewsWidget(options) {
         var widgetId = 'builtin-news';
+        options = options || {};
 
         // 如果已存在则不重复创建
         if (state.widgets.has(widgetId)) return;
 
         var widgetData = widget.create(widgetId, {
-            x: 380,
-            y: CONSTANTS.TITLE_BAR_HEIGHT + 20,
-            width: 300,
-            height: 440,
+            x: options.x != null ? options.x : 380,
+            y: options.y != null ? options.y : CONSTANTS.TITLE_BAR_HEIGHT + 20,
+            width: options.width || 300,
+            height: options.height || 440,
         });
 
         widgetData.contentBuffer = NEWS_HTML;

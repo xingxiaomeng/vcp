@@ -28,7 +28,6 @@ const trayManager = (function () {
         { id: 'vchat-app-forum', name: '论坛', icon: 'forum', action: 'open-forum-window' },
         { id: 'vchat-app-log', name: '日志', icon: 'log', action: 'open-log-window' },
         { id: 'vchat-app-dice', name: '骰子', icon: 'dice', action: 'open-dice-window' },
-        { id: 'vchat-app-rag-observer', name: '监听', icon: 'rag', action: 'open-rag-observer-window' },
         { id: 'vchat-app-themes', name: '主题', icon: 'themes', action: 'open-themes-window' },
         { id: 'vchat-app-toolbox', name: '工具', icon: 'toolbox', action: 'launch-human-toolbox' },
         { id: 'vchat-app-dbmanager', name: '数据', icon: 'database', action: 'launch-vchat-manager' },

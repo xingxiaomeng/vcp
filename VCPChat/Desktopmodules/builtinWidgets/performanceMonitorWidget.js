@@ -12,8 +12,9 @@
     /**
      * 创建性能监视器挂件
      */
-    function createPerformanceMonitor() {
+    function createPerformanceMonitor(options) {
         const widgetId = 'builtin-performance-monitor';
+        options = options || {};
         
         // 检查是否已存在
         if (state.widgets.has(widgetId)) {
@@ -170,10 +171,18 @@
                                             'builtin-music': '音乐播放条',
                                             'builtin-news': '今日热点',
                                             'builtin-translate': 'AI 翻译',
+                                            'builtin-appTray': '应用托盘',
                                             'builtin-app-tray': '应用托盘',
                                             'builtin-performance-monitor': '性能监视器',
                                             'builtin-monitor-cpu': 'CPU 监控',
+                                            'builtin-monitor-memory': 'RAM 监控',
+                                            'builtin-monitor-disk': '磁盘监控',
+                                            'builtin-monitor-network': '网络监控',
                                             'builtin-monitor-gpu': 'GPU 监控',
+                                            'builtin-monitor-battery': '电池监控',
+                                            'builtin-monitor-docker': 'Docker 监控',
+                                            'builtin-monitor-sensors': '传感器监控',
+                                            'builtin-monitor-processes': '进程监视器',
                                             'builtin-metrics': '系统监控'
                                         };
                                         name = builtinNames[name] || name;
@@ -210,10 +219,10 @@
 
         // 1. 创建容器 (widgetId, options)
         const widgetData = widget.create(widgetId, {
-            x: 100,
-            y: CONSTANTS.TITLE_BAR_HEIGHT + 20,
-            width: 320,
-            height: 480,
+            x: options.x != null ? options.x : 100,
+            y: options.y != null ? options.y : CONSTANTS.TITLE_BAR_HEIGHT + 20,
+            width: options.width || 320,
+            height: options.height || 480,
         });
 
         // 2. 注入 HTML 内容

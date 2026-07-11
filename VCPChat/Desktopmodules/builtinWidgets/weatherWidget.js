@@ -149,17 +149,18 @@
     /**
      * 生成天气挂件
      */
-    async function spawnWeatherWidget() {
+    async function spawnWeatherWidget(options) {
         var widgetId = 'builtin-weather';
+        options = options || {};
 
         // 如果已存在则不重复创建
         if (state.widgets.has(widgetId)) return;
 
         var widgetData = widget.create(widgetId, {
-            x: 40,
-            y: CONSTANTS.TITLE_BAR_HEIGHT + 20,
-            width: 320,
-            height: 280,
+            x: options.x != null ? options.x : 40,
+            y: options.y != null ? options.y : CONSTANTS.TITLE_BAR_HEIGHT + 20,
+            width: options.width || 320,
+            height: options.height || 280,
         });
 
         widgetData.contentBuffer = WEATHER_HTML;

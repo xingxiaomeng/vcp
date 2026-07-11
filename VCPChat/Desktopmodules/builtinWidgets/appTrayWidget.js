@@ -128,6 +128,22 @@
     filter: drop-shadow(0 1px 3px rgba(0,0,0,0.3));
 }
 
+.at-item-icon-svg {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255,255,255,0.85);
+    pointer-events: none;
+    filter: drop-shadow(0 1px 3px rgba(0,0,0,0.3));
+}
+
+.at-item-icon-svg svg {
+    width: 100%;
+    height: 100%;
+}
+
 .at-item-icon-placeholder {
     width: 32px;
     height: 32px;
@@ -257,7 +273,7 @@ body.light-theme .at-refresh-btn:hover { background: rgba(0,0,0,0.08); color: rg
             el.title = item.description || item.name || '';
             el.draggable = true;
 
-            // 图标：优先 icon（PNG），其次 animatedIcon（GIF），最后 emoji 占位
+            // 图标：icon(PNG) > animatedIcon(GIF) > svgIcon > emoji
             var trayDisplayIcon = item.icon || item.animatedIcon;
             if (trayDisplayIcon) {
                 var img = document.createElement('img');
@@ -265,7 +281,19 @@ body.light-theme .at-refresh-btn:hover { background: rgba(0,0,0,0.08); color: rg
                 img.src = trayDisplayIcon;
                 img.draggable = false;
                 img.onerror = function() {
-                    if (this.src !== defaultIcon) this.src = defaultIcon;
+                    if (item.svgIcon) {
+                        var svgEl = document.createElement('div');
+                        svgEl.className = 'at-item-icon-svg';
+                        svgEl.innerHTML = item.svgIcon;
+                        this.replaceWith(svgEl);
+                    } else if (item.emoji) {
+                        var emojiEl = document.createElement('div');
+                        emojiEl.className = 'at-item-icon-placeholder';
+                        emojiEl.textContent = item.emoji;
+                        this.replaceWith(emojiEl);
+                    } else if (this.src.indexOf('setting.png') === -1) {
+                        this.src = defaultIcon;
+                    }
                 };
                 el.appendChild(img);
 
@@ -276,13 +304,18 @@ body.light-theme .at-refresh-btn:hover { background: rgba(0,0,0,0.08); color: rg
                         var preload = new Image();
                         preload.src = animSrc;
                         el.addEventListener('mouseenter', function() {
-                            imgEl.src = animSrc + '?t=' + Date.now();
+                            if (imgEl.tagName === 'IMG') imgEl.src = animSrc + '?t=' + Date.now();
                         });
                         el.addEventListener('mouseleave', function() {
-                            imgEl.src = staticSrc;
+                            if (imgEl.tagName === 'IMG') imgEl.src = staticSrc;
                         });
                     })(img, trayDisplayIcon, item.animatedIcon);
                 }
+            } else if (item.svgIcon) {
+                var svgEl = document.createElement('div');
+                svgEl.className = 'at-item-icon-svg';
+                svgEl.innerHTML = item.svgIcon;
+                el.appendChild(svgEl);
             } else if (item.emoji) {
                 var placeholder = document.createElement('div');
                 placeholder.className = 'at-item-icon-placeholder';
@@ -353,8 +386,9 @@ body.light-theme .at-refresh-btn:hover { background: rgba(0,0,0,0.08); color: rg
     /**
      * 生成应用托盘挂件
      */
-    function spawnAppTrayWidget() {
+    function spawnAppTrayWidget(options) {
         const widgetId = 'builtin-appTray';
+        options = options || {};
 
         // 如果已存在则聚焦
         if (state.widgets.has(widgetId)) {
@@ -365,11 +399,14 @@ body.light-theme .at-refresh-btn:hover { background: rgba(0,0,0,0.08); color: rg
             return;
         }
 
+        const width = options.width || 340;
+        const height = options.height || 360;
+
         const widgetData = widget.create(widgetId, {
-            x: 80,
-            y: CONSTANTS.TITLE_BAR_HEIGHT + 40,
-            width: 340,
-            height: 360,
+            x: options.x != null ? options.x : 80,
+            y: options.y != null ? options.y : CONSTANTS.TITLE_BAR_HEIGHT + 40,
+            width,
+            height,
         });
 
         // 标记为固定尺寸挂件 —— 阻止 MutationObserver 触发的自动尺寸调整
@@ -382,8 +419,8 @@ body.light-theme .at-refresh-btn:hover { background: rgba(0,0,0,0.08); color: rg
         }
 
         // 强制设置固定尺寸（防止内容撑开）
-        widgetData.element.style.width = '340px';
-        widgetData.element.style.height = '360px';
+        widgetData.element.style.width = `${width}px`;
+        widgetData.element.style.height = `${height}px`;
 
         // 确保内容容器也有固定高度约束
         if (widgetData.contentContainer) {

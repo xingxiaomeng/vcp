@@ -147,15 +147,16 @@
     /**
      * 生成音乐播放条挂件
      */
-    async function spawnMusicWidget() {
+    async function spawnMusicWidget(options) {
         var widgetId = 'builtin-music';
+        options = options || {};
         if (state.widgets.has(widgetId)) return;
 
         var widgetData = widget.create(widgetId, {
-            x: 40,
-            y: window.innerHeight - 100,
-            width: 360,
-            height: 60,
+            x: options.x != null ? options.x : 40,
+            y: options.y != null ? options.y : window.innerHeight - 100,
+            width: options.width || 360,
+            height: options.height || 60,
         });
 
         widgetData.contentBuffer = MUSIC_HTML;

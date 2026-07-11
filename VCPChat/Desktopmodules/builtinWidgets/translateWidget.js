@@ -279,17 +279,18 @@
     /**
      * 生成翻译挂件
      */
-    async function spawnTranslateWidget() {
+    async function spawnTranslateWidget(options) {
         var widgetId = 'builtin-translate';
+        options = options || {};
 
         // 如果已存在则不重复创建
         if (state.widgets.has(widgetId)) return;
 
         var widgetData = widget.create(widgetId, {
-            x: 200,
-            y: CONSTANTS.TITLE_BAR_HEIGHT + 40,
-            width: 380,
-            height: 520,
+            x: options.x != null ? options.x : 200,
+            y: options.y != null ? options.y : CONSTANTS.TITLE_BAR_HEIGHT + 40,
+            width: options.width || 380,
+            height: options.height || 520,
         });
 
         widgetData.contentBuffer = TRANSLATE_HTML;

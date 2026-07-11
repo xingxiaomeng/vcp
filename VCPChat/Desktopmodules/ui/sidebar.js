@@ -266,12 +266,41 @@
     }
 
     /**
+     * 将预设/收藏中的 widgetId 解析为 VCPDesktop 导出的 spawnKey
+     * 例: builtin-weather → builtinWeather
+     *     builtin-monitor-cpu → builtinCpuMonitor（不能用朴素 camelCase）
+     */
+    function resolveBuiltinSpawnKey(widgetId) {
+        const D = window.VCPDesktop;
+        if (!widgetId) return null;
+
+        if (D.metricWidgets && typeof D.metricWidgets.list === 'function') {
+            const metric = D.metricWidgets.list().find(w => w.widgetId === widgetId);
+            if (metric && metric.exportKey) return metric.exportKey;
+        }
+
+        const ALIASES = {
+            'builtin-app-tray': 'builtinAppTray',
+            'builtin-appTray': 'builtinAppTray',
+            'builtin-performance': 'builtinPerformanceMonitor',
+            'builtin-performance-monitor': 'builtinPerformanceMonitor',
+        };
+        if (ALIASES[widgetId]) return ALIASES[widgetId];
+
+        const parts = String(widgetId).split('-');
+        if (parts.length >= 2) {
+            return parts[0] + parts.slice(1).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join('');
+        }
+        return null;
+    }
+
+    /**
      * 生成内置挂件
      */
-    function spawnBuiltinWidget(spawnKey) {
+    function spawnBuiltinWidget(spawnKey, options) {
         const D = window.VCPDesktop;
         if (D[spawnKey] && D[spawnKey].spawn) {
-            D[spawnKey].spawn();
+            D[spawnKey].spawn(options || {});
         } else {
             console.warn(`[Sidebar] Builtin widget not found: ${spawnKey}`);
         }
@@ -639,16 +668,17 @@
         if (preset.widgets && preset.widgets.length > 0) {
             for (const w of preset.widgets) {
                 if (w.isBuiltin) {
-                    // 内置挂件
-                    const builtinKey = w.widgetId.replace('builtin-', 'builtin');
-                    const capKey = 'builtin' + builtinKey.charAt(7).toUpperCase() + builtinKey.slice(8);
-                    // 尝试匹配: builtin-weather -> builtinWeather
-                    const parts = w.widgetId.split('-');
-                    if (parts.length >= 2) {
-                        const spawnKey = parts[0] + parts.slice(1).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join('');
-                        if (D[spawnKey] && D[spawnKey].spawn) {
-                            D[spawnKey].spawn();
-                        }
+                    const spawnKey = resolveBuiltinSpawnKey(w.widgetId);
+                    const geometry = {
+                        x: w.x,
+                        y: w.y,
+                        width: w.width,
+                        height: w.height,
+                    };
+                    if (spawnKey && D[spawnKey] && D[spawnKey].spawn) {
+                        D[spawnKey].spawn(geometry);
+                    } else {
+                        console.warn(`[Sidebar] Builtin widget not found for preset: ${w.widgetId} → ${spawnKey}`);
                     }
                 } else if (w.savedId) {
                     // 收藏挂件
@@ -662,7 +692,12 @@
         // 恢复桌面图标（使用精确坐标，不触发自动保存）
         // 使用 Dock 当前的图标数据来更新预设中可能过时的图标信息（用户可能已通过右键菜单更换了图标）
         if (preset.desktopIcons && preset.desktopIcons.length > 0 && D.dock) {
+            const REMOVED_APP_IDS = new Set(['vchat-app-rag-observer']);
             for (const icon of preset.desktopIcons) {
+                if (icon.type === 'vchat-app' && REMOVED_APP_IDS.has(icon.id)) {
+                    console.warn(`[Sidebar] Skipping removed app icon from preset: ${icon.id}`);
+                    continue;
+                }
                 // 从当前 Dock items 中查找匹配的项，同步最新的图标数据
                 const dockItem = state.dock.items.find(i =>
                     (icon.targetPath && i.targetPath === icon.targetPath) ||
