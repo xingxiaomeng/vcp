@@ -285,37 +285,103 @@ module.exports = function(options) {
     });
 
     // 获取每日热榜数据
-    router.get('/dailyhot', async (req, res) => {
-        const dailyHotPath = path.join(__dirname, '..', '..', 'Plugin', 'DailyHot', 'dailyhot_cache.md');
-        try {
-            const content = await fs.readFile(dailyHotPath, 'utf-8');
-            const lines = content.split('\n');
-            const newsItems = [];
-            let currentSource = '';
+    // DailyHot 插件写入 Plugin/DailyHot/dailyhot_cache.md；缓存缺失时自动触发一次抓取
+    let dailyHotRefreshPromise = null;
 
-            for (const line of lines) {
-                const sourceMatch = line.match(/^##\s+(.+)$/);
-                if (sourceMatch) {
-                    currentSource = sourceMatch[1].trim();
-                    continue;
-                }
+    function normalizeDailyHotUrl(url, source) {
+        const raw = String(url || '').trim();
+        if (!raw) return '';
+        if (/^https?:\/\//i.test(raw)) return raw;
+        const src = String(source || '').toLowerCase();
+        if (src.includes('hacker') || raw.startsWith('item?id=')) {
+            return `https://news.ycombinator.com/${raw.replace(/^\//, '')}`;
+        }
+        if (raw.startsWith('//')) return `https:${raw}`;
+        return raw;
+    }
 
-                const itemMatch = line.match(/^\d+\.\s+\[(.+?)\]\((.+?)\)/);
-                if (itemMatch) {
-                    newsItems.push({
-                        source: currentSource,
-                        title: itemMatch[1],
-                        url: itemMatch[2]
-                    });
-                }
+    function parseDailyHotMarkdown(content) {
+        // 部分源标题含换行，会把 `](url)` 拆到下一行
+        const text = String(content || '')
+            .replace(/\r\n/g, '\n')
+            .replace(/(\d+\.\s+\[[^\]]*)\n+(\]\(([^)\n]+)\))/g, '$1$2');
+
+        const newsItems = [];
+        let currentSource = '';
+
+        for (const line of text.split('\n')) {
+            const sourceMatch = line.match(/^##\s+(.+)$/);
+            if (sourceMatch) {
+                currentSource = sourceMatch[1].trim();
+                continue;
             }
 
-            res.json({ success: true, data: newsItems });
+            // 标题可能含方括号（如 [pdf]、[讨论]），用贪婪匹配到最后一个 ](
+            const itemMatch = line.trim().match(/^\d+\.\s+\[(.+)\]\((.+)\)$/);
+            if (!itemMatch) continue;
+
+            const title = itemMatch[1].replace(/\s+/g, ' ').trim();
+            const url = normalizeDailyHotUrl(itemMatch[2], currentSource);
+            if (!title || !url) continue;
+
+            newsItems.push({
+                source: currentSource || '未知',
+                title,
+                url,
+            });
+        }
+
+        return newsItems;
+    }
+
+    async function ensureDailyHotCache(dailyHotPath, forceRefresh = false) {
+        if (!forceRefresh) {
+            try {
+                await fs.access(dailyHotPath);
+                return;
+            } catch (_) {
+                // fall through to refresh
+            }
+        }
+
+        if (!dailyHotRefreshPromise) {
+            const pluginDir = path.dirname(dailyHotPath);
+            const scriptPath = path.join(pluginDir, 'daily-hot.js');
+            dailyHotRefreshPromise = execAsync(`node "${scriptPath}"`, {
+                cwd: pluginDir,
+                timeout: 120000,
+                maxBuffer: 20 * 1024 * 1024,
+                windowsHide: true,
+            }).finally(() => {
+                dailyHotRefreshPromise = null;
+            });
+        }
+
+        await dailyHotRefreshPromise;
+    }
+
+    router.get('/dailyhot', async (req, res) => {
+        const dailyHotPath = path.join(__dirname, '..', '..', 'Plugin', 'DailyHot', 'dailyhot_cache.md');
+        const forceRefresh = String(req.query.refresh || '') === '1';
+
+        try {
+            await ensureDailyHotCache(dailyHotPath, forceRefresh);
+            const content = await fs.readFile(dailyHotPath, 'utf-8');
+            const newsItems = parseDailyHotMarkdown(content);
+            res.json({ success: true, data: newsItems, count: newsItems.length });
         } catch (error) {
             if (error.code === 'ENOENT') {
-                res.status(404).json({ success: false, error: '热榜缓存文件未找到。' });
+                res.status(404).json({
+                    success: false,
+                    error: '热榜缓存文件未找到。请确认 DailyHot 插件已启用，或稍后重试。',
+                });
             } else {
-                res.status(500).json({ success: false, error: '读取热榜缓存失败。', details: error.message });
+                console.error('[AdminAPI] dailyhot failed:', error.message);
+                res.status(500).json({
+                    success: false,
+                    error: '读取或刷新热榜缓存失败。',
+                    details: error.message,
+                });
             }
         }
     });
