@@ -1,75 +1,102 @@
 // Musicmodules/music-lyrics.js
 // 歌词获取、解析、渲染、动画
+//
+// 策略：
+// 1) 先检测本地歌词（同目录 .lrc / AppData/lyric 缓存）
+// 2) 有则解析并滚动播放
+// 3) 无则联网检索；仍无则显示「本地音乐暂无歌词」/「暂无歌词」
+// 歌词流程不阻塞音频播放
 
 function setupLyrics(app) {
     app.lyricsRequestToken = app.lyricsRequestToken || 0;
     app._localLyricsMissCache = app._localLyricsMissCache || new Set();
 
+    app.showNoLyricsMessage = (isLocal) => {
+        app.currentLyrics = [];
+        app.currentLyricIndex = -1;
+        app.lyricsList.innerHTML = isLocal
+            ? '<li class="no-lyrics">本地音乐暂无歌词</li>'
+            : '<li class="no-lyrics">暂无歌词</li>';
+        app.lyricsList.style.transform = 'translateY(0px)';
+    };
+
     app.fetchAndDisplayLyricsForTrack = async (track) => {
         if (!track) return;
 
         const requestToken = ++app.lyricsRequestToken;
-        app.resetLyrics(false);
-        if (!app.api?.getMusicLyrics) return;
+        app.resetLyrics(true);
+        if (!app.api?.getMusicLyrics) {
+            app.showNoLyricsMessage(app.isLocalTrack?.(track));
+            return;
+        }
 
         const title = app.stripAudioExtension(track.title) || track.title;
         const artist = track.artist || '';
+        const isLocal = typeof app.isLocalTrack === 'function' ? app.isLocalTrack(track) : false;
+        const cacheKey = isLocal ? app.normalizePathForCompare(track.path) : '';
 
-        if (app.isLocalTrack(track)) {
-            const cacheKey = app.normalizePathForCompare(track.path);
-            if (cacheKey && app._localLyricsMissCache.has(cacheKey)) {
-                app.lyricsList.innerHTML = '<li class="no-lyrics">本地音乐暂无歌词</li>';
-                return;
-            }
-
-            let lrcContent = null;
-            try {
-                lrcContent = await app.api.getMusicLyrics({
-                    artist,
-                    title,
-                    path: track.path,
-                    localOnly: true,
-                });
-            } catch (error) {
-                console.warn('[Music] Local lyric lookup failed:', error);
-            }
-
-            if (requestToken !== app.lyricsRequestToken) return;
-
-            if (lrcContent) {
-                app.currentLyrics = app.parseLrc(lrcContent);
-                app.renderLyrics();
-                return;
-            }
-
-            if (cacheKey) app._localLyricsMissCache.add(cacheKey);
-            app.lyricsList.innerHTML = '<li class="no-lyrics">本地音乐暂无歌词</li>';
+        // 已知无歌词的本地曲：直接提示，不重复检索（不阻塞播放）
+        if (cacheKey && app._localLyricsMissCache.has(cacheKey)) {
+            app.showNoLyricsMessage(true);
             return;
         }
 
-        const lrcContent = await app.api.getMusicLyrics({ artist, title, path: track.path });
+        // —— 1) 检测本地歌词（sidecar / lyric 目录缓存）——
+        let lrcContent = null;
+        try {
+            lrcContent = await app.api.getMusicLyrics({
+                artist,
+                title,
+                path: track.path,
+            });
+        } catch (error) {
+            console.warn('[Music] Local lyric lookup failed:', error);
+        }
+
         if (requestToken !== app.lyricsRequestToken) return;
 
         if (lrcContent) {
+            if (cacheKey) app._localLyricsMissCache.delete(cacheKey);
             app.currentLyrics = app.parseLrc(lrcContent);
-            app.renderLyrics();
+            if (app.currentLyrics.length > 0) {
+                app.renderLyrics();
+                return;
+            }
+        }
+
+        // —— 2) 联网检索歌词 ——
+        if (!app.api.fetchMusicLyrics) {
+            if (cacheKey) app._localLyricsMissCache.add(cacheKey);
+            app.showNoLyricsMessage(isLocal);
             return;
         }
 
-        app.lyricsList.innerHTML = '<li class="no-lyrics">正在网络上搜索歌词...</li>';
+        app.lyricsList.innerHTML = isLocal
+            ? '<li class="no-lyrics">正在检索歌词...</li>'
+            : '<li class="no-lyrics">正在网络上搜索歌词...</li>';
+
         try {
             const fetchedLrc = await app.api.fetchMusicLyrics({ artist, title });
             if (requestToken !== app.lyricsRequestToken) return;
+
             if (fetchedLrc) {
+                if (cacheKey) app._localLyricsMissCache.delete(cacheKey);
                 app.currentLyrics = app.parseLrc(fetchedLrc);
-                app.renderLyrics();
-            } else {
-                app.lyricsList.innerHTML = '<li class="no-lyrics">暂无歌词</li>';
+                if (app.currentLyrics.length > 0) {
+                    app.renderLyrics();
+                    return;
+                }
             }
+
+            if (cacheKey) app._localLyricsMissCache.add(cacheKey);
+            app.showNoLyricsMessage(isLocal);
         } catch (error) {
             if (requestToken !== app.lyricsRequestToken) return;
-            console.error('Failed to fetch lyrics from network:', error);
-            app.lyricsList.innerHTML = '<li class="no-lyrics">歌词获取失败</li>';
+            console.error('[Music] Failed to fetch lyrics from network:', error);
+            if (cacheKey) app._localLyricsMissCache.add(cacheKey);
+            app.lyricsList.innerHTML = isLocal
+                ? '<li class="no-lyrics">本地音乐暂无歌词</li>'
+                : '<li class="no-lyrics">歌词获取失败</li>';
         }
     };
 
@@ -79,7 +106,7 @@ function setupLyrics(app) {
 
     app.parseLrc = (lrcContent) => {
         const lyricsMap = new Map();
-        const lines = lrcContent.split('\n');
+        const lines = String(lrcContent || '').split('\n');
         const timeRegex = /\[(\d{2}):(\d{2})[.:](\d{2,3})\]/g;
 
         for (const line of lines) {
@@ -138,8 +165,16 @@ function setupLyrics(app) {
     app.animateLyrics = () => {
         if (app.currentLyrics.length === 0 || !app.isPlaying) return;
 
-        const elapsedTime = (Date.now() - app.lastStateUpdateTime) / 1000;
-        const estimatedTime = app.lastKnownCurrentTime + elapsedTime;
+        // 本地 HTML5 快播路径直接读 currentTime，保证歌词跟唱
+        let estimatedTime;
+        if (app.useLocalAudioFallback && app.phantomAudio) {
+            estimatedTime = Number(app.phantomAudio.currentTime) || 0;
+            app.lastKnownCurrentTime = estimatedTime;
+            app.lastStateUpdateTime = Date.now();
+        } else {
+            const elapsedTime = (Date.now() - app.lastStateUpdateTime) / 1000;
+            estimatedTime = app.lastKnownCurrentTime + elapsedTime;
+        }
 
         let newLyricIndex = -1;
         for (let i = 0; i < app.currentLyrics.length; i++) {
