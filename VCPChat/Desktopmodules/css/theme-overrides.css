@@ -26,24 +26,30 @@ body.light-theme .desktop-title-btn:hover {
 /* ============================================================
  * 挂件 - 浅色主题
  * ============================================================ */
-body.light-theme .desktop-widget-grip:hover {
-    background: linear-gradient(
-        to bottom,
-        rgba(0, 0, 0, 0.08),
-        rgba(0, 0, 0, 0.01)
-    );
+body.light-theme .desktop-widget:hover .desktop-widget-grip::after {
+    background: rgba(0, 0, 0, 0.22);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06);
 }
 
-body.light-theme .desktop-widget-resize-se::after,
-body.light-theme .desktop-widget-resize-sw::after,
-body.light-theme .desktop-widget-resize-ne::after,
-body.light-theme .desktop-widget-resize-nw::after {
-    background: rgba(60, 120, 220, 0.55);
+body.light-theme .desktop-widget.dragging .desktop-widget-grip::after {
+    background: rgba(60, 120, 220, 0.75);
+}
+
+body.light-theme .desktop-widget:hover .desktop-widget-resize-se::after,
+body.light-theme .desktop-widget:hover .desktop-widget-resize-sw::after,
+body.light-theme .desktop-widget:hover .desktop-widget-resize-ne::after,
+body.light-theme .desktop-widget:hover .desktop-widget-resize-nw::after,
+body.light-theme .desktop-widget.resizing .desktop-widget-resize-se::after,
+body.light-theme .desktop-widget.resizing .desktop-widget-resize-sw::after,
+body.light-theme .desktop-widget.resizing .desktop-widget-resize-ne::after,
+body.light-theme .desktop-widget.resizing .desktop-widget-resize-nw::after {
+    background: rgba(60, 120, 220, 0.6);
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12);
 }
 
+body.light-theme .desktop-widget.dragging,
 body.light-theme .desktop-widget.resizing {
-    box-shadow: 0 0 0 1px rgba(60, 120, 220, 0.4), 0 8px 28px rgba(0, 0, 0, 0.18);
+    box-shadow: 0 0 0 1px rgba(60, 120, 220, 0.4), 0 12px 36px rgba(0, 0, 0, 0.18);
 }
 
 /* ============================================================

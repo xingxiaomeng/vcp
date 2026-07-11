@@ -57,43 +57,58 @@
     pointer-events: auto;
 }
 
-/* --- 抓手带（拖拽条） --- */
+/* --- 抓手带（拖拽条） ---
+ * 命中区加高，视觉条居中细线，避免难抓 / 与缩放抢事件
+ */
 .desktop-widget-grip {
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
-    height: 6px;
+    height: 28px;
     cursor: grab;
-    z-index: 10;
+    z-index: 12;
     border-radius: 12px 12px 0 0;
-    background: linear-gradient(
-        to bottom,
-        rgba(255, 255, 255, 0.0),
-        rgba(255, 255, 255, 0.0)
-    );
-    transition: background 0.25s ease, height 0.25s ease;
+    background: transparent;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
 }
 
-.desktop-widget-grip:hover {
-    background: linear-gradient(
-        to bottom,
-        rgba(255, 255, 255, 0.15),
-        rgba(255, 255, 255, 0.02)
-    );
-    height: 8px;
+.desktop-widget-grip::after {
+    content: '';
+    position: absolute;
+    top: 7px;
+    left: 50%;
+    width: 36px;
+    height: 4px;
+    margin-left: -18px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0);
+    box-shadow: none;
+    transition: background 0.18s ease, box-shadow 0.18s ease, width 0.18s ease;
+    pointer-events: none;
 }
 
-.desktop-widget-grip:active {
+.desktop-widget:hover .desktop-widget-grip::after {
+    background: rgba(255, 255, 255, 0.28);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+    width: 44px;
+    margin-left: -22px;
+}
+
+.desktop-widget-grip:active,
+.desktop-widget.dragging .desktop-widget-grip {
     cursor: grabbing;
-    background: linear-gradient(
-        to bottom,
-        rgba(255, 255, 255, 0.25),
-        rgba(255, 255, 255, 0.05)
-    );
 }
 
-/* --- 八向缩放手柄 --- */
+.desktop-widget.dragging .desktop-widget-grip::after {
+    background: rgba(140, 190, 255, 0.7);
+    width: 52px;
+    margin-left: -26px;
+}
+
+/* --- 缩放手柄：侧边/底边/四角；顶中留给拖动 --- */
 .desktop-widget-resize-handles {
     position: absolute;
     inset: 0;
@@ -106,7 +121,10 @@
     pointer-events: auto;
     background: transparent;
     opacity: 0;
-    transition: opacity 0.15s ease, background 0.15s ease;
+    transition: opacity 0.15s ease;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
 }
 
 .desktop-widget:hover .desktop-widget-resize-handle,
@@ -114,38 +132,35 @@
     opacity: 1;
 }
 
-.desktop-widget-resize-n,
 .desktop-widget-resize-s {
-    left: 10px;
-    right: 10px;
-    height: 8px;
+    left: 14px;
+    right: 14px;
+    bottom: -4px;
+    height: 10px;
 }
-
-.desktop-widget-resize-n { top: -3px; }
-.desktop-widget-resize-s { bottom: -3px; }
 
 .desktop-widget-resize-e,
 .desktop-widget-resize-w {
-    top: 10px;
-    bottom: 10px;
-    width: 8px;
+    top: 28px; /* 避开顶部拖动区 */
+    bottom: 14px;
+    width: 10px;
 }
 
-.desktop-widget-resize-e { right: -3px; }
-.desktop-widget-resize-w { left: -3px; }
+.desktop-widget-resize-e { right: -4px; }
+.desktop-widget-resize-w { left: -4px; }
 
 .desktop-widget-resize-ne,
 .desktop-widget-resize-nw,
 .desktop-widget-resize-se,
 .desktop-widget-resize-sw {
-    width: 12px;
-    height: 12px;
+    width: 16px;
+    height: 16px;
 }
 
-.desktop-widget-resize-ne { top: -4px; right: -4px; }
-.desktop-widget-resize-nw { top: -4px; left: -4px; }
-.desktop-widget-resize-se { bottom: -4px; right: -4px; }
-.desktop-widget-resize-sw { bottom: -4px; left: -4px; }
+.desktop-widget-resize-ne { top: -5px; right: -5px; }
+.desktop-widget-resize-nw { top: -5px; left: -5px; }
+.desktop-widget-resize-se { bottom: -5px; right: -5px; }
+.desktop-widget-resize-sw { bottom: -5px; left: -5px; }
 
 .desktop-widget-resize-se::after,
 .desktop-widget-resize-sw::after,
@@ -153,21 +168,56 @@
 .desktop-widget-resize-nw::after {
     content: '';
     position: absolute;
-    width: 7px;
-    height: 7px;
+    width: 8px;
+    height: 8px;
     border-radius: 2px;
-    background: rgba(120, 180, 255, 0.55);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
+    background: rgba(120, 180, 255, 0.0);
+    box-shadow: none;
+    transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 
-.desktop-widget-resize-se::after { right: 1px; bottom: 1px; }
-.desktop-widget-resize-sw::after { left: 1px; bottom: 1px; }
-.desktop-widget-resize-ne::after { right: 1px; top: 1px; }
-.desktop-widget-resize-nw::after { left: 1px; top: 1px; }
+.desktop-widget:hover .desktop-widget-resize-se::after,
+.desktop-widget:hover .desktop-widget-resize-sw::after,
+.desktop-widget:hover .desktop-widget-resize-ne::after,
+.desktop-widget:hover .desktop-widget-resize-nw::after,
+.desktop-widget.resizing .desktop-widget-resize-se::after,
+.desktop-widget.resizing .desktop-widget-resize-sw::after,
+.desktop-widget.resizing .desktop-widget-resize-ne::after,
+.desktop-widget.resizing .desktop-widget-resize-nw::after {
+    background: rgba(120, 180, 255, 0.65);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28);
+}
 
+.desktop-widget-resize-se::after { right: 2px; bottom: 2px; }
+.desktop-widget-resize-sw::after { left: 2px; bottom: 2px; }
+.desktop-widget-resize-ne::after { right: 2px; top: 2px; }
+.desktop-widget-resize-nw::after { left: 2px; top: 2px; }
+
+.desktop-widget.dragging,
 .desktop-widget.resizing {
-    box-shadow: 0 0 0 1px rgba(100, 180, 255, 0.45), 0 8px 28px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 0 0 1px rgba(100, 180, 255, 0.45), 0 12px 36px rgba(0, 0, 0, 0.38);
     user-select: none;
+    z-index: 99998 !important;
+}
+
+.desktop-widget.dragging {
+    opacity: 0.92;
+    cursor: grabbing;
+}
+
+.desktop-widget.dragging .desktop-widget-content,
+.desktop-widget.resizing .desktop-widget-content {
+    pointer-events: none;
+}
+
+body.desktop-widget-interacting {
+    cursor: inherit;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+body.desktop-widget-interacting iframe {
+    pointer-events: none !important;
 }
 
 /* --- 挂件内容区 --- */
