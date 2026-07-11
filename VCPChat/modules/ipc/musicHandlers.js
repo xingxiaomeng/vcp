@@ -10,10 +10,7 @@ const windowService = require('../services/windowService');
 const WINDOW_APP_IDS = require('../services/windowAppIds');
 const { PRELOAD_ROLES, resolveProjectPreload } = require('../services/preloadPaths');
 const AUDIO_ENGINE_URL = 'http://127.0.0.1:63789';
-const fetchImpl = typeof globalThis.fetch === 'function'
-    ? globalThis.fetch.bind(globalThis)
-    : null;
-let fetch = fetchImpl;
+let fetch;
 
 let musicWindow = null;
 let currentSongInfo = null; // 保持这个变量，用于可能的UI状态同步
@@ -309,13 +306,6 @@ function initialize(options) {
         });
 
         ipcMain.handle('music-load', async (event, track) => {
-            if (typeof startAudioEngine === 'function') {
-                try {
-                    await startAudioEngine();
-                } catch (error) {
-                    return { status: 'error', message: `音频引擎未就绪: ${error.message}` };
-                }
-            }
             if (track && track.path) {
                 currentSongInfo = {
                     title: track.title || '未知标题',
@@ -355,14 +345,8 @@ function initialize(options) {
             return { status: 'error', message: 'Invalid track data provided.' };
         });
 
-        ipcMain.handle('music-play', async () => {
-            if (typeof startAudioEngine === 'function') {
-                try {
-                    await startAudioEngine();
-                } catch (error) {
-                    return { status: 'error', message: `音频引擎未就绪: ${error.message}` };
-                }
-            }
+        ipcMain.handle('music-play', () => {
+            // 只有在有歌曲信息时才真正播放
             if (currentSongInfo) {
                 return audioEngineApi('/play', 'POST');
             }
@@ -379,10 +363,6 @@ function initialize(options) {
 
         ipcMain.handle('music-get-state', async () => {
             return await audioEngineApi('/state', 'GET');
-        });
-
-        ipcMain.handle('music-get-loading-status', async () => {
-            return await audioEngineApi('/loading_status', 'GET');
         });
 
         ipcMain.handle('music-set-volume', (event, volume) => {
@@ -870,15 +850,13 @@ function initialize(options) {
     ipcHandlersRegistered = true;
     console.error('[Music] IPC handlers registered.');
     console.log('[Music] IPC handlers registered.');
-
-    if (!fetchImpl) {
-        import('node-fetch').then(module => {
-            fetch = module.default;
-            console.log('[Music] node-fetch loaded successfully.');
-        }).catch(err => {
-            console.error('[Music] Failed to load node-fetch:', err);
-        });
-    }
+    
+    import('node-fetch').then(module => {
+        fetch = module.default;
+        console.log('[Music] node-fetch loaded successfully.');
+    }).catch(err => {
+        console.error('[Music] Failed to load node-fetch:', err);
+    });
 }
 
 module.exports = {

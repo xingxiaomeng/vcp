@@ -301,9 +301,9 @@ class KnowledgeBaseManager {
             CREATE INDEX IF NOT EXISTS idx_file_tags_composite ON file_tags(tag_id, file_id);
             CREATE INDEX IF NOT EXISTS idx_migration_deleted_lookup ON migration_deleted_files(checksum, size, expires_at);
             CREATE INDEX IF NOT EXISTS idx_migration_deleted_expiry ON migration_deleted_files(expires_at);
-            
+
         `);
-        
+
         // 🛠️ 核心修复：由于 db.exec 不支持动态执行 SELECT 返回的 SQL，我们手动补丁
         try {
             this.db.prepare("ALTER TABLE file_tags ADD COLUMN position INTEGER NOT NULL DEFAULT 0").run();
@@ -542,7 +542,7 @@ class KnowledgeBaseManager {
         if (this.dbHealthState !== 'healthy') return { ok: false, reason: `database-${this.dbHealthState}` };
 
         const now = Date.now();
-        if (this.startupCompletedAt > 0) {
+        if (this.startupCompletedAt > 0 && options.allowDuringStartupCooldown !== true) {
             const sinceStartupReady = now - this.startupCompletedAt;
             if (sinceStartupReady < this.config.derivedStartupCooldownMs) {
                 return { ok: false, reason: `startup-cooldown:${this.config.derivedStartupCooldownMs - sinceStartupReady}ms` };
@@ -840,7 +840,7 @@ class KnowledgeBaseManager {
 
         const shouldPersist = this.config.persistDefault || this.config.persistFolders.has(diaryName) || diaryName.endsWith('簇');
         console.log(`[KnowledgeBase] 📂 Loading index for diary: "${diaryName}" (Persist: ${shouldPersist})`);
-        
+
         const safeName = crypto.createHash('md5').update(diaryName).digest('hex');
         const fileName = `diary_${safeName}`;
         const capacity = 50000;
@@ -901,6 +901,7 @@ class KnowledgeBaseManager {
     async search(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
         try {
             let diaryName = null;
+            let diaryNames = null;
             let queryVec = null;
             let k = 5;
             let tagBoost = 0;
@@ -908,8 +909,14 @@ class KnowledgeBaseManager {
             let coreBoostFactor = 1.33; // 默认 33% 提升
             let options = null; // 🌟 V8: 扩展选项（geodesicRerank 等）
 
-            if (typeof arg1 === 'string' && this._isVectorLike(arg2)) {
-                diaryName = arg1;
+            // 必须先于 _isVectorLike 判断：字符串数组代表“虚拟联合索引”，不是查询向量。
+            const isDiaryNameArray = Array.isArray(arg1) && arg1.every(name => typeof name === 'string');
+            if ((typeof arg1 === 'string' || isDiaryNameArray) && this._isVectorLike(arg2)) {
+                if (isDiaryNameArray) {
+                    diaryNames = [...new Set(arg1.map(name => name.trim()).filter(Boolean))];
+                } else {
+                    diaryName = arg1;
+                }
                 queryVec = arg2;
                 k = arg3 || 5;
                 tagBoost = arg4 || 0;
@@ -951,11 +958,17 @@ class KnowledgeBaseManager {
 
             if (!queryVec) return [];
 
+            if (diaryNames) {
+                if (diaryNames.length === 0) return [];
+                if (diaryNames.length === 1) {
+                    return await this._searchSpecificIndex(diaryNames[0], queryVec, k, tagBoost, coreTags, coreBoostFactor, options);
+                }
+                return await this._searchSelectedIndices(diaryNames, queryVec, k, tagBoost, coreTags, coreBoostFactor, options);
+            }
             if (diaryName) {
                 return await this._searchSpecificIndex(diaryName, queryVec, k, tagBoost, coreTags, coreBoostFactor, options);
-            } else {
-                return await this._searchAllIndices(queryVec, k, tagBoost, coreTags, coreBoostFactor, options);
             }
+            return await this._searchAllIndices(queryVec, k, tagBoost, coreTags, coreBoostFactor, options);
         } catch (e) {
             console.error('[KnowledgeBase] Search Error:', e);
             return [];
@@ -1115,7 +1128,27 @@ class KnowledgeBaseManager {
     }
 
     async _searchAllIndices(vector, k, tagBoost, coreTags = [], coreBoostFactor = 1.33, options = null) {
-        // 优化2：使用 Promise.all 并行搜索
+        const diaryNames = this.db.prepare('SELECT DISTINCT diary_name FROM files').all()
+            .map(row => row.diary_name)
+            .filter(Boolean);
+        return await this._searchSelectedIndices(
+            diaryNames, vector, k, tagBoost, coreTags, coreBoostFactor, options
+        );
+    }
+
+    /**
+     * 在指定日记本集合上执行一次逻辑联合搜索。
+     * 各物理 Vexus 索引只负责返回候选；TagMemo 增强、测地线重排、全局 Top-K 与 SQLite hydrate
+     * 均在联合层只执行一次，使该集合在调用方看来等价于一个请求级虚拟索引。
+     */
+    async _searchSelectedIndices(diaryNames, vector, k, tagBoost, coreTags = [], coreBoostFactor = 1.33, options = null) {
+        const selectedDiaries = [...new Set(
+            (Array.isArray(diaryNames) ? diaryNames : [])
+                .map(name => String(name || '').trim())
+                .filter(Boolean)
+        )];
+        if (selectedDiaries.length === 0) return [];
+
         let searchVecFloat;
         let tagInfo = null;
         let energyField = null;
@@ -1138,27 +1171,34 @@ class KnowledgeBaseManager {
             searchVecFloat = vector instanceof Float32Array ? vector : new Float32Array(vector);
         }
 
-        const allDiaries = this.db.prepare('SELECT DISTINCT diary_name FROM files').all();
+        if (searchVecFloat.length !== this.config.dimension) {
+            console.error(`[KnowledgeBase] Dimension mismatch! Expected ${this.config.dimension}, got ${searchVecFloat.length}`);
+            return [];
+        }
 
-        const searchPromises = allDiaries.map(async ({ diary_name }) => {
+        const perIndexK = Math.max(
+            Math.max(1, Math.round(Number(k) || 1)),
+            Math.max(1, Math.round(Number(options?.perIndexK) || 0))
+        );
+        const globalK = Math.max(1, Math.round(Number(options?.globalK) || Number(k) || 1));
+
+        const searchPromises = selectedDiaries.map(async diaryName => {
             try {
-                const idx = await this._getOrLoadDiaryIndex(diary_name);
+                const idx = await this._getOrLoadDiaryIndex(diaryName);
                 const stats = idx.stats ? idx.stats() : { totalVectors: 1 };
                 if (stats.totalVectors === 0) return [];
-                return idx.search(searchVecFloat, k);
+                return idx.search(searchVecFloat, perIndexK);
             } catch (e) {
-                console.error(`[KnowledgeBase] Vexus search error in parallel global search (${diary_name}):`, e);
+                console.error(`[KnowledgeBase] Vexus search error in selected-index search (${diaryName}):`, e);
                 return [];
             }
         });
 
         const resultsPerIndex = await Promise.all(searchPromises);
         let allResults = resultsPerIndex.flat();
+        allResults.sort((a, b) => (b.score || 0) - (a.score || 0));
 
-        allResults.sort((a, b) => b.score - a.score);
-
-        // 🌟 V8: 测地线重排（只重排，不截断）— 对合并后的全局结果执行
-        // 使用查询级 energyField，避免 _getOrLoadDiaryIndex / Promise.all 期间并发搜索覆盖 lastEnergyField。
+        // 测地线必须在物理索引结果合并后执行，确保所有成员共享同一能量场和排序口径。
         if (options?.geodesicRerank && energyField) {
             const geoConfig = this.ragParams?.KnowledgeBaseManager?.geodesicRerank || {};
             allResults = this.tagMemoEngine.geodesicRerank(allResults, {
@@ -1168,15 +1208,13 @@ class KnowledgeBaseManager {
             });
         }
 
-        const topK = allResults.slice(0, k);
-
+        const topK = allResults.slice(0, globalK);
         const topChunkIds = topK.map(res => Number(res.id)).filter(Number.isFinite);
         const rows = this._queryByChunks(`
-            SELECT c.id, c.content as text, f.path as sourceFile, f.id as file_id
+            SELECT c.id, c.content as text, f.path as sourceFile, f.diary_name, f.id as file_id
             FROM chunks c JOIN files f ON c.file_id = f.id WHERE c.id`, topChunkIds);
         const rowByChunkId = new Map(rows.map(row => [row.id, row]));
 
-        // 🛠️ V8.1 修复：per-chunk 标签关联（与 _searchSpecificIndex 对称）
         const hydratedResults = [];
         for (const res of topK) {
             const chunkId = Number(res.id);
@@ -1185,50 +1223,54 @@ class KnowledgeBaseManager {
             hydratedResults.push({
                 chunkId,
                 _fileId: row.file_id,
+                diaryName: row.diary_name,
                 text: row.text,
                 score: res.score,
+                original_knn_score: res.original_knn_score,
+                geo_score: res.geo_score,
+                normalized_geo: res.normalized_geo,
+                geo_hit_count: res.geo_hit_count,
                 sourceFile: path.basename(row.sourceFile),
                 fullPath: row.sourceFile,
                 boostFactor: tagInfo ? tagInfo.boostFactor : 0,
-                tagMatchScore: tagInfo ? tagInfo.totalSpikeScore : 0,
+                tagMatchScore: tagInfo ? tagInfo.totalSpikeScore : 0
             });
         }
 
-        // 🌟 V8.1: 批量查询 per-chunk 真实标签
         if (hydratedResults.length > 0 && tagInfo) {
             const uniqueFileIds = [...new Set(hydratedResults.map(r => r._fileId))];
-            if (uniqueFileIds.length > 0) {
-                const fileTagRows = this._queryByChunks(
+            const fileTagRows = uniqueFileIds.length > 0
+                ? this._queryByChunks(
                     'SELECT ft.file_id, t.name FROM file_tags ft JOIN tags t ON ft.tag_id = t.id WHERE ft.file_id',
                     uniqueFileIds
-                );
+                )
+                : [];
+            const fileTagNameMap = new Map();
+            for (const row of fileTagRows) {
+                if (!fileTagNameMap.has(row.file_id)) fileTagNameMap.set(row.file_id, []);
+                fileTagNameMap.get(row.file_id).push(row.name);
+            }
 
-                const fileTagNameMap = new Map();
-                for (const row of fileTagRows) {
-                    if (!fileTagNameMap.has(row.file_id)) fileTagNameMap.set(row.file_id, []);
-                    fileTagNameMap.get(row.file_id).push(row.name);
-                }
-
-                const queryCoreTags = new Set((tagInfo.coreTagsMatched || []).map(t => t.toLowerCase()));
-                const queryAllTags = new Set((tagInfo.matchedTags || []).map(t => t.toLowerCase()));
-
-                for (const r of hydratedResults) {
-                    const chunkRealTags = fileTagNameMap.get(r._fileId) || [];
-                    // 🌟 V8.1: per-chunk matchedTags = 该 chunk 文件的全部真实标签
-                    r.matchedTags = chunkRealTags;
-                    r.tagMatchCount = chunkRealTags.length;
-                    r.coreTagsMatched = chunkRealTags.filter(t => queryCoreTags.has(t.toLowerCase()));
-                }
+            const queryCoreTags = new Set((tagInfo.coreTagsMatched || []).map(t => t.toLowerCase()));
+            for (const result of hydratedResults) {
+                const chunkRealTags = fileTagNameMap.get(result._fileId) || [];
+                result.matchedTags = chunkRealTags;
+                result.tagMatchCount = chunkRealTags.length;
+                result.coreTagsMatched = chunkRealTags.filter(tag => queryCoreTags.has(tag.toLowerCase()));
             }
         } else {
-            for (const r of hydratedResults) {
-                r.matchedTags = [];
-                r.tagMatchCount = 0;
-                r.coreTagsMatched = [];
+            for (const result of hydratedResults) {
+                result.matchedTags = [];
+                result.tagMatchCount = 0;
+                result.coreTagsMatched = [];
             }
         }
 
-        for (const r of hydratedResults) { delete r._fileId; }
+        for (const result of hydratedResults) delete result._fileId;
+        console.log(
+            `[KnowledgeBase] 🔗 Virtual index search: ${selectedDiaries.length} indices, ` +
+            `perIndexK=${perIndexK}, globalK=${globalK}, candidates=${allResults.length}, returned=${hydratedResults.length}`
+        );
         return hydratedResults;
     }
 
@@ -1241,6 +1283,22 @@ class KnowledgeBaseManager {
     applyTagBoost(vector, tagBoost, coreTags = [], coreBoostFactor = 1.33) {
         if (!this.tagMemoEngine) return { vector: vector instanceof Float32Array ? vector : new Float32Array(vector), info: null };
         return this.tagMemoEngine.applyTagBoost(vector, tagBoost, coreTags, coreBoostFactor);
+    }
+
+    /**
+     * 🧠 主动触发 TagMemo 全量自学习训练。
+     * 该入口会委托 TagMemoEngine 清空 1% 阈值累计计数，并进入派生任务队列异步执行。
+     */
+    requestActiveFullTraining(options = {}) {
+        if (!this.tagMemoEngine || typeof this.tagMemoEngine.requestActiveFullTraining !== 'function') {
+            return {
+                queued: false,
+                reason: options.reason || 'admin-active-full-training',
+                error: 'TagMemoEngine is not available'
+            };
+        }
+
+        return this.tagMemoEngine.requestActiveFullTraining(options);
     }
 
     /**
@@ -1779,7 +1837,7 @@ class KnowledgeBaseManager {
                 const vexusModule = require('./rust-vexus-lite');
                 if (vexusModule.VexusWatcher) {
                     const rustWatcher = new vexusModule.VexusWatcher();
-                    
+
                     const handleRustEvent = (...args) => {
                         try {
                             // napi-rs ThreadsafeFunction 在不同签名/版本下可能以
@@ -2269,6 +2327,7 @@ class KnowledgeBaseManager {
         const decorativeEmojis = /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu;
         // 1. 移除表情符号, 2. 合并水平空格, 3. 移除换行符周围的空格, 4. 合并多个换行符, 5. 清理首尾
         let cleaned = text.replace(decorativeEmojis, ' ')
+            .replace(/<\|([^|]+)\|>/g, '$1')
             .replace(/[ \t]+/g, ' ')
             .replace(/ *\n */g, '\n')
             .replace(/\n{2,}/g, '\n')
@@ -2413,11 +2472,11 @@ class KnowledgeBaseManager {
 
     _scheduleIndexSave(name) {
         // 判定该索引是否允许持久化
-        const shouldPersist = name === 'global_tags' 
+        const shouldPersist = name === 'global_tags'
             ? (this.config.persistTagIndex || this.config.persistFolders.has('global_tags'))
             : (this.config.persistDefault || this.config.persistFolders.has(name) || name.endsWith('簇'));
 
-        if (!shouldPersist) return; 
+        if (!shouldPersist) return;
         if (this.saveTimers.has(name)) return;
         const delay = this.config.indexSaveDelay;
         const timer = setTimeout(() => {
@@ -2516,7 +2575,7 @@ class KnowledgeBaseManager {
     async _cleanupGhostIndexes() {
         console.log('[KnowledgeBase] 🛡️ Starting Ghost Index self-check...');
         const allDiaries = this.db.prepare('SELECT DISTINCT diary_name FROM files').all();
-        
+
         for (const { diary_name } of allDiaries) {
             try {
                 const idx = await this._getOrLoadDiaryIndex(diary_name);
@@ -2604,6 +2663,143 @@ class KnowledgeBaseManager {
         if (evictedCount > 0) {
             console.log(`[KnowledgeBase] 🧹 Idle sweep complete: evicted ${evictedCount} index(es), ${this.diaryIndices.size} remaining in memory, elapsed=${Date.now() - sweepStartedAt}ms.`);
         }
+    }
+
+    _estimateVexusIndexBytes(totalVectors = 0) {
+        const vectorBytes = Math.max(0, Number(totalVectors) || 0) * this.config.dimension * Float32Array.BYTES_PER_ELEMENT;
+        // Vexus/USearch 原生索引除向量主体外还包含图结构、ID 映射和分配器碎片；这里只做保守估算。
+        return Math.round(vectorBytes * 1.6);
+    }
+
+    _safeIndexStats(index) {
+        if (!index || typeof index.stats !== 'function') {
+            return { available: false, totalVectors: 0 };
+        }
+
+        try {
+            const stats = index.stats() || {};
+            return {
+                available: true,
+                ...stats,
+                totalVectors: Number(stats.totalVectors ?? stats.size ?? stats.vectors ?? 0) || 0
+            };
+        } catch (e) {
+            return {
+                available: false,
+                totalVectors: 0,
+                error: e.message || String(e)
+            };
+        }
+    }
+
+    getMemoryProfile() {
+        const profileStartedAt = Date.now();
+        const dimension = this.config.dimension;
+        const loadedDiaryIndices = [];
+
+        for (const [diaryName, index] of this.diaryIndices.entries()) {
+            const stats = this._safeIndexStats(index);
+            const estimatedBytes = this._estimateVexusIndexBytes(stats.totalVectors);
+            loadedDiaryIndices.push({
+                name: diaryName,
+                stats,
+                estimatedBytes,
+                lastUsedAt: this.diaryIndexLastUsed.get(diaryName) || null,
+                idleMs: this.diaryIndexLastUsed.has(diaryName) ? Date.now() - this.diaryIndexLastUsed.get(diaryName) : null,
+                dateIndexItems: this.diaryDateIndexCache.get(diaryName)?.length || 0
+            });
+        }
+
+        loadedDiaryIndices.sort((left, right) => right.estimatedBytes - left.estimatedBytes);
+
+        const tagIndexStats = this._safeIndexStats(this.tagIndex);
+        const tagIndexEstimatedBytes = this._estimateVexusIndexBytes(tagIndexStats.totalVectors);
+
+        const tagMemo = this.tagMemoEngine ? (() => {
+            const cooccurrenceSources = this.tagMemoEngine.tagCooccurrenceMatrix instanceof Map
+                ? this.tagMemoEngine.tagCooccurrenceMatrix.size
+                : 0;
+            let cooccurrenceEdges = 0;
+            if (this.tagMemoEngine.tagCooccurrenceMatrix instanceof Map) {
+                for (const edges of this.tagMemoEngine.tagCooccurrenceMatrix.values()) {
+                    if (edges instanceof Map) cooccurrenceEdges += edges.size;
+                }
+            }
+
+            const pairwiseSimilarities = this.tagMemoEngine.tagPairSimilarities instanceof Map
+                ? this.tagMemoEngine.tagPairSimilarities.size
+                : 0;
+            const intrinsicResiduals = this.tagMemoEngine.tagIntrinsicResiduals instanceof Map
+                ? this.tagMemoEngine.tagIntrinsicResiduals.size
+                : 0;
+
+            // JS Map 条目实际开销受 V8 版本影响很大；按 key/value/桶结构给诊断级估算。
+            const pairwiseEstimatedBytes = pairwiseSimilarities * 80;
+            const cooccurrenceEstimatedBytes = cooccurrenceSources * 96 + cooccurrenceEdges * 64;
+            const intrinsicEstimatedBytes = intrinsicResiduals * 32;
+
+            return {
+                available: true,
+                modelSig: this.tagMemoEngine.modelSig || null,
+                pairwiseSimilarities,
+                pairwiseEstimatedBytes,
+                cooccurrenceSources,
+                cooccurrenceEdges,
+                cooccurrenceEstimatedBytes,
+                intrinsicResiduals,
+                intrinsicEstimatedBytes,
+                matrixRebuilding: !!this.tagMemoEngine._isMatrixRebuilding,
+                derivedQueueLength: Array.isArray(this.tagMemoEngine._derivedTaskQueue) ? this.tagMemoEngine._derivedTaskQueue.length : 0,
+                estimatedBytes: pairwiseEstimatedBytes + cooccurrenceEstimatedBytes + intrinsicEstimatedBytes
+            };
+        })() : {
+            available: false,
+            estimatedBytes: 0
+        };
+
+        const diaryNameVectorEstimatedBytes = this.diaryNameVectorCache.size * dimension * 8;
+        const diaryDateIndexEstimatedBytes = Array.from(this.diaryDateIndexCache.values())
+            .reduce((sum, items) => sum + (Array.isArray(items) ? items.length * 160 : 0), 0);
+        const loadedDiaryEstimatedBytes = loadedDiaryIndices.reduce((sum, item) => sum + item.estimatedBytes, 0);
+        const estimatedBytes = tagIndexEstimatedBytes + loadedDiaryEstimatedBytes + tagMemo.estimatedBytes + diaryNameVectorEstimatedBytes + diaryDateIndexEstimatedBytes;
+
+        return {
+            module: 'KnowledgeBaseManager',
+            initialized: this.initialized,
+            dimension,
+            rootPath: this.config.rootPath,
+            storePath: this.config.storePath,
+            dbHealthState: this.dbHealthState,
+            databaseCorruptionDetected: this.databaseCorruptionDetected,
+            queues: {
+                pendingFiles: this.pendingFiles.size,
+                pendingDeletes: this.pendingDeletes.size,
+                saveTimers: this.saveTimers.size,
+                isProcessing: this.isProcessing,
+                isProcessingDeletes: this.isProcessingDeletes
+            },
+            tagIndex: {
+                stats: tagIndexStats,
+                estimatedBytes: tagIndexEstimatedBytes
+            },
+            diaryIndices: {
+                loadedCount: this.diaryIndices.size,
+                trackedCount: this.diaryIndexLastUsed.size,
+                idleTtlMs: this.config.indexIdleTTL,
+                estimatedBytes: loadedDiaryEstimatedBytes,
+                items: loadedDiaryIndices
+            },
+            caches: {
+                diaryNameVectorCount: this.diaryNameVectorCache.size,
+                diaryNameVectorEstimatedBytes,
+                diaryDateIndexCount: this.diaryDateIndexCache.size,
+                diaryDateIndexEstimatedBytes
+            },
+            tagMemo,
+            estimatedBytes,
+            generatedAt: new Date().toISOString(),
+            elapsedMs: Date.now() - profileStartedAt
+        };
     }
 
     async shutdown() {

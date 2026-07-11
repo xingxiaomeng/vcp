@@ -352,16 +352,15 @@ impl StreamingResampler {
     /// 
     /// Returns the number of frames written to output.
     /// Output buffer must be large enough: output.len() >= input.len() * to_rate / from_rate + 64
-    pub fn process_chunk_into(&mut self, input: &[f64], output: &mut Vec<f64>) -> usize {
+    pub fn process_chunk_into(&mut self, input: &[f64], output: &mut [f64]) -> usize {
         if self.from_rate == self.to_rate {
-            output.clear();
-            output.extend_from_slice(input);
-            return input.len() / self.channels;
+            let copy_len = input.len().min(output.len());
+            output[..copy_len].copy_from_slice(&input[..copy_len]);
+            return copy_len / self.channels;
         }
         
         let input_frames = input.len() / self.channels;
         if input_frames == 0 {
-            output.clear();
             return 0;
         }
         
@@ -400,13 +399,12 @@ impl StreamingResampler {
         }
         
         let out_frames = self.channel_outputs[0].len();
-        let needed_samples = out_frames * self.channels;
-        output.clear();
-        output.resize(needed_samples, 0.0);
         for f in 0..out_frames {
             for ch in 0..self.channels {
                 let idx = f * self.channels + ch;
-                output[idx] = self.channel_outputs[ch].get(f).copied().unwrap_or(0.0);
+                if idx < output.len() {
+                    output[idx] = self.channel_outputs[ch].get(f).copied().unwrap_or(0.0);
+                }
             }
         }
         

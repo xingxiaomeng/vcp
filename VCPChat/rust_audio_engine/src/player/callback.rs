@@ -533,14 +533,14 @@ pub fn audio_callback_lockfree(
             let samples_resampled = frames_written * channels;
             
             let mut chunk_idx = 0;
-            while samples_written < output_len && chunk_idx < samples_resampled && chunk_idx < resample_output.len() {
+            while samples_written < output_len && chunk_idx < samples_resampled {
                 data[samples_written] = resample_output[chunk_idx] as f32;
                 samples_written += 1;
                 chunk_idx += 1;
             }
 
-            if chunk_idx < samples_resampled && chunk_idx < resample_output.len() {
-                resample_leftover.extend_from_slice(&resample_output[chunk_idx..samples_resampled.min(resample_output.len())]);
+            if chunk_idx < samples_resampled {
+                resample_leftover.extend_from_slice(&resample_output[chunk_idx..samples_resampled]);
                 *resample_leftover_pos = 0;
             }
         } else {

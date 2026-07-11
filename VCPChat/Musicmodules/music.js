@@ -229,7 +229,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const init = async () => {
         // Setup modules
         setupUtils(app);
-        setupLocalFallback(app);
         setupVisualizer(app);
         setupLyrics(app);
         setupPlayer(app);
@@ -334,11 +333,7 @@ document.addEventListener('DOMContentLoaded', () => {
         app.volumeSlider.oninput = (e) => {
             const val = parseFloat(e.target.value);
             app.updateVolumeSliderBackground(val);
-            if (app.useLocalAudioFallback && app.phantomAudio) {
-                app.phantomAudio.volume = val;
-            } else {
-                app.api?.setMusicVolume?.(val);
-            }
+            app.api?.setMusicVolume?.(val);
             if (app.wnpAdapter) app.wnpAdapter.sendUpdate();
             app.saveSettings();
         };
@@ -355,13 +350,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 app.currentTimeEl.textContent = app.formatTime(newTime);
 
                 if (shouldSeek) {
-                    if (app.useLocalAudioFallback && app.phantomAudio) {
-                        app.phantomAudio.currentTime = newTime;
-                        app.syncFallbackProgress();
-                    } else {
-                        await app.api.seekMusic(newTime);
-                        if (app.isPlaying) app.startStatePolling();
-                    }
+                    await app.api.seekMusic(newTime);
+                    if (app.isPlaying) app.startStatePolling();
                 }
             }
         };

@@ -158,7 +158,7 @@ const emoticonManager = (() => {
         if (x < 0) x = 10;
         if (y < 0) y = rect.bottom + 10;
 
-        loadUserEmoticons().then(() => populateAndShowPanel(x, y));
+        populateAndShowPanel(x, y);
     }
 
     return {

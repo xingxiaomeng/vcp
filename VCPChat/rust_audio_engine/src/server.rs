@@ -715,10 +715,8 @@ pub async fn run_server(port: u16, config: AppConfig, settings_manager: SharedSe
     
     log::info!("Starting VCP Audio Engine on http://127.0.0.1:{}", port);
     
-    // Print ready signal for parent process (flush so piped stdout is not block-buffered)
-    use std::io::{self, Write};
+    // Print ready signal for parent process
     println!("RUST_AUDIO_ENGINE_READY");
-    let _ = io::stdout().flush();
     
     let server_state = Arc::clone(&state);
     let server = HttpServer::new(move || {

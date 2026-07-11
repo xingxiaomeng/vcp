@@ -9,7 +9,6 @@
     const desktopApi = window.desktopAPI || window.electronAPI;
     let _vcpCredentials = null; // 缓存凭据（admin API: Basic Auth）
     let _vcpApiCredentials = null; // 缓存凭据（VCP Chat API: Bearer Token）
-    let _defaultChatModel = 'deepseek-v4-flash';
 
     /**
      * 初始化 vcpAPI 凭据
@@ -39,11 +38,6 @@
                 } else {
                     console.warn('[VCPdesktop] VCP Chat API credentials not available (vcpServerUrl or vcpApiKey missing)');
                 }
-
-                if (result.defaultChatModel) {
-                    _defaultChatModel = result.defaultChatModel;
-                }
-                window.__vcpDefaultChatModel = _defaultChatModel;
 
                 return true;
             } else {
@@ -75,23 +69,7 @@
                 ...(options.headers || {}),
             },
         });
-        let data;
-        try {
-            data = await response.json();
-        } catch (_) {
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            throw new Error('Invalid JSON response from admin API');
-        }
-        if (!response.ok) {
-            const message = data?.error || data?.message || `HTTP ${response.status}`;
-            throw new Error(message);
-        }
-        if (data && data.success === false && data.error) {
-            throw new Error(data.error);
-        }
-        return data;
+        return response.json();
     }
 
     /**
@@ -196,10 +174,6 @@
         return _vcpCredentials?.apiBaseUrl || null;
     }
 
-    function getDefaultChatModel() {
-        return _defaultChatModel;
-    }
-
     // 挂载全局代理函数供 widget 脚本沙箱内调用
     window.__vcpProxyFetch = proxyFetch;
     window.__vcpProxyPost = vcpPost;
@@ -215,7 +189,6 @@
         hasCredentials,
         hasChatCredentials,
         getBaseUrl,
-        getDefaultChatModel,
     };
 
 })();

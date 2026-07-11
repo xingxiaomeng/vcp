@@ -555,14 +555,11 @@
                     };
                     
                     var vcpAPI = {
-                        fetch: function(endpoint, opts) { return _realWindow.__vcpProxyFetch(endpoint, opts); },
-                        post: function(messages, opts) { return _realWindow.__vcpProxyPost(messages, opts); },
-                        weather: function() { return _realWindow.__vcpProxyFetch('/admin_api/weather'); },
+                        fetch: function(endpoint, opts) { return window.__vcpProxyFetch(endpoint, opts); },
+                        post: function(messages, opts) { return window.__vcpProxyPost(messages, opts); },
+                        weather: function() { return window.__vcpProxyFetch('/admin_api/weather'); },
                     };
-
-                    var metricsApi = (_realWindow.VCPDesktop && _realWindow.VCPDesktop.metrics) ? _realWindow.VCPDesktop.metrics : null;
-                    var desktopBridge = _realWindow.desktopAPI || _realWindow.electronAPI;
-
+                    
                     var widgetFS = {
                         saveFile: function(fileName, content, encoding) {
                             var _savedId = null;
@@ -574,7 +571,7 @@
                                 }
                             } catch(e) {}
                             if (!_savedId) return Promise.reject('Widget not saved yet. Save it first via favorites.');
-                            return desktopBridge ? desktopBridge.desktopSaveWidgetFile({
+                            return _musicBridge ? _musicBridge.desktopSaveWidgetFile({
                                 widgetId: _savedId,
                                 fileName: fileName,
                                 content: content,
@@ -588,7 +585,7 @@
                                 if (_wd) _savedId = _wd.savedId;
                             } catch(e) {}
                             if (!_savedId) return Promise.reject('Widget not saved yet.');
-                            return desktopBridge ? desktopBridge.desktopLoadWidgetFile({
+                            return _musicBridge ? _musicBridge.desktopLoadWidgetFile({
                                 widgetId: _savedId,
                                 fileName: fileName
                             }) : Promise.reject('desktop bridge not available');
@@ -600,24 +597,25 @@
                                 if (_wd) _savedId = _wd.savedId;
                             } catch(e) {}
                             if (!_savedId) return Promise.reject('Widget not saved yet.');
-                            return desktopBridge ? desktopBridge.desktopListWidgetFiles(_savedId) : Promise.reject('desktop bridge not available');
+                            return _musicBridge ? _musicBridge.desktopListWidgetFiles(_savedId) : Promise.reject('desktop bridge not available');
                         },
                     };
                     
+                    var _musicBridge = window.desktopAPI || window.electronAPI;
                     var musicAPI = {
-                        play: function() { return desktopBridge && desktopBridge.musicPlay ? desktopBridge.musicPlay() : Promise.reject('music bridge not available'); },
-                        pause: function() { return desktopBridge && desktopBridge.musicPause ? desktopBridge.musicPause() : Promise.reject('music bridge not available'); },
+                        play: function() { return _musicBridge && _musicBridge.musicPlay ? _musicBridge.musicPlay() : Promise.reject('music bridge not available'); },
+                        pause: function() { return _musicBridge && _musicBridge.musicPause ? _musicBridge.musicPause() : Promise.reject('music bridge not available'); },
                         getState: function() {
-                            if (!desktopBridge || !desktopBridge.getMusicState) return Promise.reject('music bridge not available');
-                            return desktopBridge.getMusicState().then(function(r) {
+                            if (!_musicBridge || !_musicBridge.getMusicState) return Promise.reject('music bridge not available');
+                            return _musicBridge.getMusicState().then(function(r) {
                                 return (r && r.state) ? r.state : r;
                             });
                         },
-                        setVolume: function(v) { return desktopBridge && desktopBridge.setMusicVolume ? desktopBridge.setMusicVolume(v) : Promise.reject('music bridge not available'); },
-                        seek: function(pos) { return desktopBridge && desktopBridge.seekMusic ? desktopBridge.seekMusic(pos) : Promise.reject('music bridge not available'); },
+                        setVolume: function(v) { return _musicBridge && _musicBridge.setMusicVolume ? _musicBridge.setMusicVolume(v) : Promise.reject('music bridge not available'); },
+                        seek: function(pos) { return _musicBridge && _musicBridge.seekMusic ? _musicBridge.seekMusic(pos) : Promise.reject('music bridge not available'); },
                         send: function(channel, data) {
-                            if (channel === 'music-remote-command' && desktopBridge && desktopBridge.sendMusicRemoteCommand) {
-                                desktopBridge.sendMusicRemoteCommand(data);
+                            if (channel === 'music-remote-command' && _musicBridge && _musicBridge.sendMusicRemoteCommand) {
+                                _musicBridge.sendMusicRemoteCommand(data);
                             }
                         },
                     };

@@ -12,6 +12,7 @@ const { getAuthCode } = require('./modules/captchaDecoder'); // 导入统一的�
 const ToolApprovalManager = require('./modules/toolApprovalManager');
 const { hasFoldMarkers, buildDynamicFoldObject } = require('./modules/foldProtocol');
 const { sanitizeToolResult } = require('./modules/toolResultPrivacyGuard');
+const toolCallRecordStore = require('./modules/toolCallRecordStore');
 
 const PLUGIN_DIR = path.join(__dirname, 'Plugin');
 const manifestFileName = 'plugin-manifest.json';
@@ -716,11 +717,16 @@ class PluginManager extends EventEmitter {
                         if (ragPluginModule && ragPluginModule.vectorDBManager && typeof ragPluginModule.getSingleEmbedding === 'function') {
                             dependencies.vectorDBManager = ragPluginModule.vectorDBManager;
                             dependencies.getSingleEmbedding = ragPluginModule.getSingleEmbedding.bind(ragPluginModule);
+                            if (typeof ragPluginModule.getBatchEmbeddingsCached === 'function') {
+                                dependencies.getBatchEmbeddings = ragPluginModule.getBatchEmbeddingsCached.bind(ragPluginModule);
+                            } else if (typeof ragPluginModule.getBatchEmbeddings === 'function') {
+                                dependencies.getBatchEmbeddings = ragPluginModule.getBatchEmbeddings.bind(ragPluginModule);
+                            }
                             // 同时注入 ContextBridge（如果 LightMemo 未在 manifest 中声明，也主动注入）
                             if (!dependencies.contextBridge && typeof ragPluginModule.getContextBridge === 'function') {
                                 dependencies.contextBridge = ragPluginModule.getContextBridge();
                             }
-                            if (this.debugMode) console.log(`[PluginManager] Injected VectorDBManager, getSingleEmbedding and ContextBridge into LightMemo.`);
+                            if (this.debugMode) console.log(`[PluginManager] Injected VectorDBManager, getSingleEmbedding, getBatchEmbeddings and ContextBridge into LightMemo.`);
                         } else {
                             console.error(`[PluginManager] Critical dependency failure: RAGDiaryPlugin or its components not available for LightMemo injection.`);
                         }
@@ -875,9 +881,20 @@ class PluginManager extends EventEmitter {
     }
 
     async processToolCall(toolName, toolArgs, requestIp = null, sourceNode = null, executionOptions = {}) {
+        const shouldManageToolCallRecord = !executionOptions?.toolCallRecordHandle;
+        const managedToolCallRecord = shouldManageToolCallRecord
+            ? toolCallRecordStore.beginRecord({ toolName, args: toolArgs || {}, requestIp, sourceNode })
+            : null;
+
         const plugin = this.plugins.get(toolName);
         if (!plugin) {
-            throw new Error(`[PluginManager] Plugin "${toolName}" not found for tool call.`);
+            const notFoundError = new Error(`[PluginManager] Plugin "${toolName}" not found for tool call.`);
+            toolCallRecordStore.finishRecord(managedToolCallRecord, {
+                success: false,
+                result: { plugin_execution_error: notFoundError.message },
+                error: notFoundError
+            });
+            throw notFoundError;
         }
 
         // Helper function to generate a timestamp string
@@ -1012,6 +1029,19 @@ class PluginManager extends EventEmitter {
                     if (this.debugMode) {
                         console.log(`[PluginManager] Tool call for "${toolName}" (ID: ${requestId}) was rejected silently. Returning empty result to AI.`);
                     }
+                    const silentRejectionRecord = {
+                        status: 'rejected',
+                        success: false,
+                        silentRejected: true,
+                        error_type: 'approval_rejected',
+                        rejected_by_user: true,
+                        message: `Tool call "${toolName}" was rejected silently by manual approval.`
+                    };
+                    toolCallRecordStore.finishRecord(managedToolCallRecord, {
+                        success: false,
+                        result: silentRejectionRecord,
+                        error: silentRejectionRecord.message
+                    });
                     return undefined;
                 }
                 if (this.debugMode) console.log(`[PluginManager] Tool call for "${toolName}" (ID: ${requestId}) approved.`);
@@ -1091,6 +1121,13 @@ class PluginManager extends EventEmitter {
                 const pluginOutput = await this.executePlugin(toolName, executionParam, requestIp, executionOptions); // Returns {status, result/error}
 
                 if (pluginOutput.__vcpArcheryNoReplySilent) {
+                    toolCallRecordStore.finishRecord(managedToolCallRecord, {
+                        success: true,
+                        result: pluginOutput.result
+                    });
+                    if (managedToolCallRecord?.id && pluginOutput.result && typeof pluginOutput.result === 'object' && !pluginOutput.result.tool_call_record_id) {
+                        pluginOutput.result.tool_call_record_id = managedToolCallRecord.id;
+                    }
                     return pluginOutput.result;
                 }
 
@@ -1120,6 +1157,20 @@ class PluginManager extends EventEmitter {
             }
 
             // --- 通用结果处理 ---
+            // 兼容 direct/hybrid 插件主动返回 stdio 风格的 { status, result } 包装。
+            // stdio 插件会在上方被解包到 pluginOutput.result；direct 插件没有这一步，
+            // 因此这里补齐一次，使 direct 插件也能返回与 VSearch 相同的
+            // { status: "success", result: { content: [...] } } 形态。
+            if (
+                resultFromPlugin &&
+                typeof resultFromPlugin === 'object' &&
+                resultFromPlugin.status === 'success' &&
+                resultFromPlugin.result &&
+                typeof resultFromPlugin.result === 'object'
+            ) {
+                resultFromPlugin = resultFromPlugin.result;
+            }
+
             let finalResultObject = (typeof resultFromPlugin === 'object' && resultFromPlugin !== null) ? resultFromPlugin : { original_plugin_output: resultFromPlugin };
 
             if (maidNameFromArgs) {
@@ -1128,7 +1179,15 @@ class PluginManager extends EventEmitter {
             finalResultObject.timestamp = _getFormattedLocalTimestamp();
             _filterFuzzyDiff(finalResultObject, _getFormattedLocalTimestamp());
 
-            return this._sanitizeToolResultForAi(finalResultObject);
+            const sanitizedResult = this._sanitizeToolResultForAi(finalResultObject);
+            toolCallRecordStore.finishRecord(managedToolCallRecord, {
+                success: true,
+                result: sanitizedResult
+            });
+            if (managedToolCallRecord?.id && sanitizedResult && typeof sanitizedResult === 'object' && !sanitizedResult.tool_call_record_id) {
+                sanitizedResult.tool_call_record_id = managedToolCallRecord.id;
+            }
+            return sanitizedResult;
 
         } catch (e) {
             console.error(`[PluginManager processToolCall] Error during execution for plugin ${toolName}:`, e.message);
@@ -1146,7 +1205,16 @@ class PluginManager extends EventEmitter {
                 errorObject.timestamp = _getFormattedLocalTimestamp();
             }
             _filterFuzzyDiff(errorObject, _getFormattedLocalTimestamp());
-            throw new Error(JSON.stringify(this._sanitizeToolResultForAi(errorObject)));
+            const sanitizedErrorObject = this._sanitizeToolResultForAi(errorObject);
+            toolCallRecordStore.finishRecord(managedToolCallRecord, {
+                success: false,
+                result: sanitizedErrorObject,
+                error: e
+            });
+            if (managedToolCallRecord?.id && sanitizedErrorObject && typeof sanitizedErrorObject === 'object' && !sanitizedErrorObject.tool_call_record_id) {
+                sanitizedErrorObject.tool_call_record_id = managedToolCallRecord.id;
+            }
+            throw new Error(JSON.stringify(sanitizedErrorObject));
         }
     }
 

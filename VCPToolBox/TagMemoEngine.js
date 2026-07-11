@@ -673,7 +673,8 @@ class TagMemoEngine {
      * 复用 Spike Propagation 已计算的 accumulatedEnergy 距离场，
      * 对 KNN 候选 chunk 做基于"地形贴地距离"的二次重排。
      *
-     * 三层防御链：
+     * 四层防御链：
+     *   L-1: Tag 能量场/候选采样可信度不足 → 整体退化（返回原数组）
      *   L0: lastEnergyField 为空 → 整体退化（返回原数组）
      *   L1: chunk 的 hitCount < minGeoSamples → 该 chunk 的 geoScore = 0
      *   L2: 所有 chunk 的 maxGeo = 0 → 归一化跳过，全部走纯 KNN
@@ -711,6 +712,67 @@ class TagMemoEngine {
         const alpha = Math.max(0, Math.min(1, Number(rawAlpha)));
         const minGeoSamples = Math.max(1, Math.floor(Number(rawMinGeoSamples)));
 
+        const fallbackToKnnOnLowTrust = geoConfig.fallbackToKnnOnLowTrust !== false
+            && geoConfig.fallbackToKnnOnLowTrust !== 0;
+        const minFieldTags = Math.max(1, Math.floor(Number(geoConfig.minFieldTags ?? minGeoSamples)));
+        const minFieldEntropy = Math.max(0, Math.min(1, Number(geoConfig.minFieldEntropy ?? 0.12)));
+        const minGeoCoverageRatio = Math.max(0, Math.min(1, Number(geoConfig.minGeoCoverageRatio ?? 0.2)));
+        const minMaxGeoScore = Math.max(0, Number(geoConfig.minMaxGeoScore ?? 0.01));
+        const minGeoScoreSpread = Math.max(0, Number(geoConfig.minGeoScoreSpread ?? 0.03));
+
+        const fallbackToKnn = (reason, extra = {}) => {
+            if (fallbackToKnnOnLowTrust) {
+                const extraText = Object.entries(extra)
+                    .map(([key, value]) => `${key}=${typeof value === 'number' ? value.toFixed(4) : value}`)
+                    .join(', ');
+                console.log(`[TagMemo-V8 Geodesic] 🛡️ Low-trust map fallback to KNN: ${reason}${extraText ? ` (${extraText})` : ''}`);
+                return candidates;
+            }
+            return null;
+        };
+
+        // L-1a: 查询级 Tag 能量场太稀疏或熵过低时，视为地图可信度不足。
+        if (fallbackToKnnOnLowTrust) {
+            if (energyField.size < minFieldTags) {
+                return fallbackToKnn('energy field has too few activated tags', {
+                    fieldTags: energyField.size,
+                    minFieldTags
+                });
+            }
+
+            let fieldEnergySum = 0;
+            const fieldEnergies = [];
+            for (const value of energyField.values()) {
+                const energy = Math.max(0, Number(value) || 0);
+                if (energy <= 0) continue;
+                fieldEnergies.push(energy);
+                fieldEnergySum += energy;
+            }
+
+            if (fieldEnergySum <= 0 || fieldEnergies.length < minFieldTags) {
+                return fallbackToKnn('energy field has insufficient positive mass', {
+                    positiveTags: fieldEnergies.length,
+                    minFieldTags
+                });
+            }
+
+            let entropy = 0;
+            for (const energy of fieldEnergies) {
+                const p = energy / fieldEnergySum;
+                entropy -= p * Math.log(p);
+            }
+            const normalizedEntropy = fieldEnergies.length > 1
+                ? entropy / Math.log(fieldEnergies.length)
+                : 0;
+
+            if (normalizedEntropy < minFieldEntropy) {
+                return fallbackToKnn('energy field entropy too low', {
+                    entropy: normalizedEntropy,
+                    minFieldEntropy
+                });
+            }
+        }
+
         try {
             // Step 1: 批量查询 chunk_id → file_id 映射（chunked IN，避免 SQLite 参数数量上限）
             const chunkIds = candidates.map(c => Number(c.id)).filter(Number.isFinite);
@@ -737,6 +799,9 @@ class TagMemoEngine {
 
             // Step 3: 对每个候选计算 geoScore
             let maxGeo = 0;
+            let minPositiveGeo = Infinity;
+            let geoContributionCount = 0;
+            let geoHitCountSum = 0;
             const geoData = candidates.map(c => {
                 const chunkId = Number(c.id);
                 const fileId = chunkFileMap.get(chunkId);
@@ -761,7 +826,12 @@ class TagMemoEngine {
                     ? totalEnergy / hitCount
                     : 0; // 密度不足 → 放弃测地线评估，退化为纯 KNN
 
-                if (geoScore > maxGeo) maxGeo = geoScore;
+                if (geoScore > 0) {
+                    geoContributionCount++;
+                    geoHitCountSum += hitCount;
+                    if (geoScore > maxGeo) maxGeo = geoScore;
+                    if (geoScore < minPositiveGeo) minPositiveGeo = geoScore;
+                }
 
                 return { candidate: c, geoScore, hitCount, totalEnergy };
             });
@@ -769,6 +839,35 @@ class TagMemoEngine {
             // L2: 所有 chunk 的 maxGeo = 0 → 归一化跳过，全部走纯 KNN 排序
             if (maxGeo === 0) {
                 return candidates;
+            }
+
+            // L-1b: 候选采样视角的地图可信度门控。覆盖率/强度/区分度不足时，回归 KNN。
+            if (fallbackToKnnOnLowTrust) {
+                const geoCoverageRatio = geoContributionCount / candidates.length;
+                const avgGeoHitCount = geoContributionCount > 0 ? geoHitCountSum / geoContributionCount : 0;
+                const geoScoreSpread = Number.isFinite(minPositiveGeo) ? maxGeo - minPositiveGeo : 0;
+
+                if (geoCoverageRatio < minGeoCoverageRatio) {
+                    return fallbackToKnn('candidate geo coverage too low', {
+                        coverage: geoCoverageRatio,
+                        minGeoCoverageRatio,
+                        avgGeoHitCount
+                    });
+                }
+
+                if (maxGeo < minMaxGeoScore) {
+                    return fallbackToKnn('max geo score too low', {
+                        maxGeo,
+                        minMaxGeoScore
+                    });
+                }
+
+                if (geoScoreSpread < minGeoScoreSpread) {
+                    return fallbackToKnn('geo score spread too low', {
+                        spread: geoScoreSpread,
+                        minGeoScoreSpread
+                    });
+                }
             }
 
             // Step 4: 归一化并混合分数
@@ -790,7 +889,7 @@ class TagMemoEngine {
             // Step 5: 按 finalScore 降序排列（只重排，不截断）
             reranked.sort((a, b) => b.score - a.score);
 
-            console.log(`[TagMemo-V8 Geodesic] α=${alpha}, minSamples=${minGeoSamples}, candidates=${candidates.length}, maxGeo=${maxGeo.toFixed(4)}, reranked=${reranked.filter(r => r.geo_score > 0).length} with geo contribution`);
+            console.log(`[TagMemo-V8 Geodesic] α=${alpha}, minSamples=${minGeoSamples}, candidates=${candidates.length}, maxGeo=${maxGeo.toFixed(4)}, coverage=${(geoContributionCount / candidates.length).toFixed(3)}, reranked=${reranked.filter(r => r.geo_score > 0).length} with geo contribution`);
 
             return reranked;
 
@@ -1355,8 +1454,51 @@ class TagMemoEngine {
         }
     }
 
+    requestActiveFullTraining(options = {}) {
+        const reason = options.reason || 'admin-active-full-training';
+        const previousPendingNewTags = this._accumulatedNewTagIds.size;
+
+        if (this._matrixRebuildTimer) {
+            clearTimeout(this._matrixRebuildTimer);
+            this._matrixRebuildTimer = null;
+        }
+
+        // 主动训练相当于手动消费“1% 阈值窗口”：按钮使用后立即清零累计计数，
+        // 避免训练完成后又被旧的防抖窗口重复触发。
+        this._accumulatedNewTagIds.clear();
+        this._accumulatedTagChanges = 0;
+        this._matrixRebuildScheduleLogged = false;
+
+        const taskId = this._enqueueDerivedTask('active-full-training', async () => {
+            await this.doMatrixRebuild({
+                reason,
+                fullRebuildPairwise: true,
+                forceIntrinsicResiduals: true,
+                preservePendingOnFailure: false,
+                allowDuringStartupCooldown: true
+            });
+            return true;
+        }, { maxAttempts: options.maxAttempts ?? 1 });
+
+        console.log(
+            `[TagMemoEngine] 🧠 Active full self-training requested. ` +
+            `taskId=${taskId}, resetPendingNewTags=${previousPendingNewTags}, reason=${reason}`
+        );
+
+        return {
+            taskId,
+            queued: true,
+            reason,
+            resetPendingNewTags: previousPendingNewTags,
+            threshold: this._getMatrixRebuildThreshold()
+        };
+    }
+
     async doMatrixRebuild(options = {}) {
         const rebuildReason = options.reason || 'manual';
+        const preservePendingOnFailure = options.preservePendingOnFailure !== false;
+        const fullRebuildPairwise = options.fullRebuildPairwise === true;
+        const forceIntrinsicResiduals = options.forceIntrinsicResiduals === true;
         if (this._isMatrixRebuilding) {
             console.warn('[TagMemoEngine] Matrix rebuild already running; keeping accumulated new tags for next debounce window.');
             if (!this._matrixRebuildTimer && this._accumulatedNewTagIds.size > 0) {
@@ -1377,7 +1519,7 @@ class TagMemoEngine {
             const rebuilt = await this._withRustWriteLease('tagmemo:matrix-rebuild', async () => {
                 // 🌟 V8.2-γ: 先补齐底座，再构建矩阵
                 // 顺序：sim 预计算 → 屏障 → 加载 sim Map → 内生残差预计算/屏障/加载 → 构建 V8.2 双向矩阵
-                const pairResult = await this.recomputePairwiseSimilarities({ blocking: true, leaseAlreadyHeld: true });
+                const pairResult = await this.recomputePairwiseSimilarities({ blocking: true, leaseAlreadyHeld: true, fullRebuild: fullRebuildPairwise });
                 if (!pairResult) return false;
                 // 🛡️ P0: Rust 写后先 checkpoint + 健康屏障（含 suspect 重开），再用健康连接读取派生表，
                 // 避免跨连接 WAL/SHM 瞬态视图触发读端 malformed。屏障失败即中止本轮，不继续后续阶段。
@@ -1385,11 +1527,14 @@ class TagMemoEngine {
                 this.loadPairwiseSimilarities({ failOnCorruption: true });
 
                 const isThresholdRebuild = rebuildReason === 'threshold' || rebuildReason === 'follow-up-threshold';
-                const shouldRecomputeIntrinsicResiduals = this._isIntrinsicResidualRecomputeEnabled()
+                const shouldRecomputeIntrinsicResiduals = forceIntrinsicResiduals
+                    || this._isIntrinsicResidualRecomputeEnabled()
                     || (isThresholdRebuild && this._isIntrinsicResidualThresholdRecomputeEnabled());
 
                 if (shouldRecomputeIntrinsicResiduals) {
-                    if (isThresholdRebuild && !this._isIntrinsicResidualRecomputeEnabled()) {
+                    if (forceIntrinsicResiduals) {
+                        console.log('[TagMemoEngine] 🔁 Intrinsic residual recompute forced by active full training request.');
+                    } else if (isThresholdRebuild && !this._isIntrinsicResidualRecomputeEnabled()) {
                         console.log('[TagMemoEngine] 🔁 Intrinsic residual recompute enabled for threshold matrix rebuild: TAGMEMO_IR_RECOMPUTE_ON_THRESHOLD=true.');
                     }
                     const intrinsicResult = await this.recomputeIntrinsicResiduals({ leaseAlreadyHeld: true });
@@ -1406,20 +1551,30 @@ class TagMemoEngine {
 
                 this.buildDirectedCooccurrenceMatrix();
                 return true;
-            }, { pendingThreshold: 0 });
+            }, {
+                pendingThreshold: 0,
+                allowDuringStartupCooldown: options.allowDuringStartupCooldown === true
+            });
 
             if (!rebuilt) {
-                for (const id of newTagIdsAtStart) this._accumulatedNewTagIds.add(id);
-                this._accumulatedTagChanges = this._accumulatedNewTagIds.size;
-                this._scheduleMatrixRebuildTimer(this._getMatrixRebuildQuietMs(), rebuildReason);
+                if (preservePendingOnFailure) {
+                    for (const id of newTagIdsAtStart) this._accumulatedNewTagIds.add(id);
+                    this._accumulatedTagChanges = this._accumulatedNewTagIds.size;
+                    this._scheduleMatrixRebuildTimer(this._getMatrixRebuildQuietMs(), rebuildReason);
+                }
                 return;
             }
         } catch (e) {
-            console.error('[TagMemoEngine] ❌ Matrix rebuild failed; preserving accumulated changes and scheduling retry:', e.message || e);
+            console.error(
+                `[TagMemoEngine] ❌ Matrix rebuild failed${preservePendingOnFailure ? '; preserving accumulated changes and scheduling retry' : ''}:`,
+                e.message || e
+            );
             if (e.stack) console.error(e.stack);
-            for (const id of newTagIdsAtStart) this._accumulatedNewTagIds.add(id);
-            this._accumulatedTagChanges = this._accumulatedNewTagIds.size;
-            this._scheduleMatrixRebuildTimer(this._getMatrixRebuildQuietMs(), rebuildReason);
+            if (preservePendingOnFailure) {
+                for (const id of newTagIdsAtStart) this._accumulatedNewTagIds.add(id);
+                this._accumulatedTagChanges = this._accumulatedNewTagIds.size;
+                this._scheduleMatrixRebuildTimer(this._getMatrixRebuildQuietMs(), rebuildReason);
+            }
         } finally {
             this._isMatrixRebuilding = false;
             if (this._accumulatedNewTagIds.size > 0) {

@@ -6,8 +6,8 @@ set "ENGINE_DIR=%ROOT_DIR%rust_audio_engine"
 set "DEPLOY_DIR=%ROOT_DIR%audio_engine"
 set "SOURCE_EXE=%ENGINE_DIR%\target\release\audio_server.exe"
 set "TARGET_EXE=%DEPLOY_DIR%\audio_server.exe"
-set "PKGCONF_DIR=d:\VCP\vcp\vcpkg\installed\x64-windows-static\tools\pkgconf"
-set "PKGCONFIG_DIR=d:\VCP\vcp\vcpkg\installed\x64-windows-static\lib\pkgconfig"
+set "PKGCONF_DIR=H:\VCP\vcpkg\installed\x64-windows-static\tools\pkgconf"
+set "PKGCONFIG_DIR=H:\VCP\vcpkg\installed\x64-windows-static\lib\pkgconfig"
 
 echo [VCP] Building Rust audio engine...
 echo [VCP] Engine dir: "%ENGINE_DIR%"

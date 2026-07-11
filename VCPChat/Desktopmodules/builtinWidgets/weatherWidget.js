@@ -135,7 +135,7 @@
         '            contentEl.innerHTML = html;',
         '        } catch(e) {',
         '            var loadingEl = document.getElementById("vw-loading");',
-        '            if (loadingEl) loadingEl.innerHTML = "❌ 天气获取失败: " + e.message + "<br><span style=\\"font-size:10px;opacity:0.7\\">请确认 VCPToolBox 已启动，并在 config.env 配置 WeatherKey 后运行 WeatherReporter 插件</span>";',
+        '            if (loadingEl) loadingEl.innerHTML = "❌ 天气获取失败: " + e.message;',
         '            console.error("[Weather Widget]", e);',
         '        }',
         '    }',

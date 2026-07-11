@@ -458,34 +458,16 @@ function createOrFocusChildWindow(existingWindow, options) {
     return win;
 }
 
-function resolveMainWindow() {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        return mainWindow;
-    }
-    return BrowserWindow.getAllWindows().find((win) => {
-        if (win.isDestroyed()) return false;
-        const url = win.webContents.getURL();
-        return url.includes('main.html') && !url.includes('desktop.html');
-    }) || null;
-}
-
-function broadcastDesktopStatus(connected, message) {
-    const payload = { connected, message };
-    if (desktopWindow && !desktopWindow.isDestroyed()) {
-        desktopWindow.webContents.send('desktop-status', payload);
-    }
-    const activeMainWindow = resolveMainWindow();
-    if (activeMainWindow) {
-        activeMainWindow.webContents.send('desktop-status', payload);
-    }
-}
-
-function notifyDesktopConnectionStatus(message = 'Connected.') {
-    broadcastDesktopStatus(true, message);
-}
-
 function ensureMainWindowVisible() {
-    const targetMainWindow = resolveMainWindow();
+    let targetMainWindow = mainWindow;
+    if (!targetMainWindow || targetMainWindow.isDestroyed()) {
+        const allWindows = BrowserWindow.getAllWindows();
+        targetMainWindow = allWindows.find(win => {
+            if (win.isDestroyed()) return false;
+            const url = win.webContents.getURL();
+            return url.includes('main.html') && !url.includes('desktop.html');
+        });
+    }
 
     if (!targetMainWindow || targetMainWindow.isDestroyed()) {
         throw new Error('Main window is not available.');
@@ -921,23 +903,6 @@ function initialize(params) {
         await openDesktopWindow();
     });
 
-    ipcMain.handle('desktop-request-handshake', async (event) => {
-        const isDesktopSender = desktopWindow
-            && !desktopWindow.isDestroyed()
-            && event.sender === desktopWindow.webContents;
-
-        if (!isDesktopSender) {
-            return { success: false, connected: false, error: 'Invalid sender' };
-        }
-
-        notifyDesktopConnectionStatus('Connected.');
-        return {
-            success: true,
-            connected: true,
-            mainWindowReady: !!resolveMainWindow(),
-        };
-    });
-
     // --- IPC: 窗口始终置底控制 ---
     ipcMain.handle('desktop-set-always-on-bottom', (event, enabled) => {
         setAlwaysOnBottom(enabled);
@@ -1319,7 +1284,6 @@ function initialize(params) {
 
             let vcpServerUrl = '';
             let vcpApiKey = '';
-            let defaultChatModel = 'deepseek-v4-flash';
             let username = '';
             let password = '';
 
@@ -1328,7 +1292,6 @@ function initialize(params) {
                     const settings = await fs.readJson(settingsPath);
                     vcpServerUrl = settings.vcpServerUrl || '';
                     vcpApiKey = settings.vcpApiKey || '';
-                    defaultChatModel = settings.topicSummaryModel || settings.defaultChatModel || defaultChatModel;
                 } catch (e) { /* ignore */ }
             }
 
@@ -1340,11 +1303,12 @@ function initialize(params) {
                 } catch (e) { /* ignore */ }
             }
 
-            // 从 vcpServerUrl 推导出 admin API base URL（与论坛/天气模块一致）
+            // 从 vcpServerUrl 推导出 admin API base URL
             let apiBaseUrl = '';
             if (vcpServerUrl) {
                 try {
-                    apiBaseUrl = vcpServerUrl.replace(/\/v1\/chat\/completions\/?$/i, '').replace(/\/$/, '');
+                    const urlObj = new URL(vcpServerUrl);
+                    apiBaseUrl = `${urlObj.protocol}//${urlObj.host}`;
                 } catch (e) { /* ignore */ }
             }
 
@@ -1355,7 +1319,6 @@ function initialize(params) {
                 vcpApiKey,
                 username,
                 password,
-                defaultChatModel,
             };
         } catch (err) {
             console.error('[DesktopHandlers] Get credentials error:', err);
@@ -2258,7 +2221,6 @@ async function openDesktopWindow() {
     if (desktopWindow && !desktopWindow.isDestroyed()) {
         if (!desktopWindow.isVisible()) desktopWindow.show();
         desktopWindow.focus();
-        notifyDesktopConnectionStatus('Connected.');
         return desktopWindow;
     }
 
@@ -2306,13 +2268,6 @@ async function openDesktopWindow() {
         console.warn('[Desktop] Failed to read global settings:', e.message);
     }
 
-    const announceDesktopReady = () => {
-        if (!desktopWindow || desktopWindow.isDestroyed()) return;
-        notifyDesktopConnectionStatus('Connected.');
-    };
-
-    desktopWindow.webContents.once('did-finish-load', announceDesktopReady);
-
     desktopWindow.once('ready-to-show', () => {
         // 启动时自动最大化
         if (desktopGlobalSettings.autoMaximize) {
@@ -2334,10 +2289,14 @@ async function openDesktopWindow() {
             desktopWindow.once('closed', () => clearTimeout(enableAlwaysOnBottomTimer));
         }
 
-        announceDesktopReady();
-        // 页面脚本可能仍在注册 IPC 监听，延迟补发一次握手避免竞态丢失
-        setTimeout(announceDesktopReady, 500);
-        setTimeout(announceDesktopReady, 1500);
+        // 通知桌面窗口自身连接状态
+        if (desktopWindow && !desktopWindow.isDestroyed()) {
+            desktopWindow.webContents.send('desktop-status', { connected: true, message: 'Connected.' });
+        }
+        // 关键：通知主窗口桌面画布已就绪，让主窗口的 streamManager 知道可以推送了
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('desktop-status', { connected: true, message: 'Desktop window is ready.' });
+        }
     });
 
     // 锁定最大化状态：如果开启了自动最大化，阻止用户手动还原
@@ -2375,7 +2334,10 @@ async function openDesktopWindow() {
         removeFromOpenChildWindows(desktopWindow);
         desktopWindow = null;
         console.log('[Desktop] Desktop window closed.');
-        broadcastDesktopStatus(false, 'Desktop window closed.');
+        // 通知主窗口桌面画布已关闭
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('desktop-status', { connected: false, message: 'Desktop window closed.' });
+        }
     });
 
     return desktopWindow;
@@ -2610,7 +2572,6 @@ module.exports = {
     openDesktopWindow,
     pushToDesktop,
     getDesktopWindow,
-    notifyDesktopConnectionStatus,
     generateCatalog,
     cleanupStandaloneAppProcesses,
 };

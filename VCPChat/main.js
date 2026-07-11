@@ -159,130 +159,71 @@ let isFinalizingQuit = false;
 
 // --- Audio Engine Management ---
 // Now uses the Rust native audio engine instead of Python
-const AUDIO_ENGINE_URL = 'http://127.0.0.1:63789';
-
-async function waitForAudioEngineReady(timeoutMs = 15000) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-        try {
-            const response = await fetch(`${AUDIO_ENGINE_URL}/state`, {
-                signal: AbortSignal.timeout(1000),
-            });
-            if (response.ok) {
-                return;
-            }
-        } catch (_) {
-            // Engine still booting or unreachable — keep polling.
-        }
-        await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-    throw new Error('Audio Engine timed out.');
-}
-
 function startAudioEngine() {
-    return new Promise(async (resolve, reject) => {
-        try {
-            if (audioEngineProcess && !audioEngineProcess.killed) {
-                console.log('[Main] Audio Engine process is already running.');
-                await waitForAudioEngineReady(3000);
+    return new Promise((resolve, reject) => {
+        // --- Uniqueness Check ---
+        if (audioEngineProcess && !audioEngineProcess.killed) {
+            console.log('[Main] Audio Engine process is already running.');
+            resolve(); // Already running, so we can consider it "ready"
+            return;
+        }
+
+        // Use the Rust audio server binary (moved to audio_engine directory)
+        const binaryName = process.platform === 'win32' ? 'audio_server.exe' : 'audio_server';
+        const rustBinaryPath = path.join(__dirname, 'audio_engine', binaryName);
+        console.log(`[Main] Starting Rust Audio Engine from: ${rustBinaryPath}`);
+
+        // Check if the binary exists
+        if (!fs.existsSync(rustBinaryPath)) {
+            const errorMsg = `Rust audio engine binary not found at: ${rustBinaryPath}. Please run 'cargo build --release' in rust_audio_engine directory.`;
+            console.error(`[Main] ${errorMsg}`);
+            reject(new Error(errorMsg));
+            return;
+        }
+
+        audioEngineStopPromise = null;
+        isAudioEngineStopping = false;
+
+        const args = ['--port', '63789'];
+        audioEngineProcess = spawn(rustBinaryPath, args);
+
+        const readyTimeout = setTimeout(() => {
+            console.error('[Main] Audio Engine failed to start within 10 seconds.');
+            reject(new Error('Audio Engine timed out.'));
+        }, 10000); // 10-second timeout (Rust starts faster)
+
+        audioEngineProcess.stdout.on('data', (data) => {
+            const output = data.toString().trim();
+            console.log(`[AudioEngine STDOUT]: ${output}`);
+            // Check for our ready signal from Rust server
+            if (output.includes('RUST_AUDIO_ENGINE_READY')) {
+                console.log('[Main] Rust Audio Engine is ready.');
+                clearTimeout(readyTimeout);
                 resolve();
-                return;
             }
+        });
 
-            // Engine may already be listening even if this process did not spawn it.
-            try {
-                await waitForAudioEngineReady(1000);
-                console.log('[Main] Audio Engine already responding on port 63789.');
-                resolve();
-                return;
-            } catch (_) {
-                // Not running yet — spawn below.
+        audioEngineProcess.stderr.on('data', (data) => {
+            const logLine = data.toString().trim();
+            if (logLine && !logLine.includes('GET /state HTTP/1.1')) {
+                const logMethod = isAudioEngineStopping ? console.warn : console.error;
+                logMethod(`[AudioEngine STDERR]: ${logLine}`);
             }
+        });
 
-            const binaryName = process.platform === 'win32' ? 'audio_server.exe' : 'audio_server';
-            const rustBinaryPath = path.join(__dirname, 'audio_engine', binaryName);
-            console.log(`[Main] Starting Rust Audio Engine from: ${rustBinaryPath}`);
-
-            if (!fs.existsSync(rustBinaryPath)) {
-                const errorMsg = `Rust audio engine binary not found at: ${rustBinaryPath}. Please run '编译并部署音频引擎.bat' or 'cargo build --release' in rust_audio_engine.`;
-                console.error(`[Main] ${errorMsg}`);
-                reject(new Error(errorMsg));
-                return;
-            }
-
+        audioEngineProcess.on('close', (code) => {
+            console.log(`[Main] Audio Engine process exited with code ${code}`);
+            clearTimeout(readyTimeout);
+            audioEngineProcess = null;
             audioEngineStopPromise = null;
             isAudioEngineStopping = false;
+        });
 
-            const args = ['--port', '63789'];
-            audioEngineProcess = spawn(rustBinaryPath, args, {
-                cwd: path.join(__dirname, 'audio_engine'),
-            });
-
-            let settled = false;
-            const finishReady = () => {
-                if (settled) return;
-                settled = true;
-                clearTimeout(readyTimeout);
-                resolve();
-            };
-            const finishError = (error) => {
-                if (settled) return;
-                settled = true;
-                clearTimeout(readyTimeout);
-                reject(error);
-            };
-
-            const readyTimeout = setTimeout(() => {
-                console.error('[Main] Audio Engine failed to start within 15 seconds.');
-                finishError(new Error('Audio Engine timed out.'));
-            }, 15000);
-
-            audioEngineProcess.stdout.on('data', (data) => {
-                const output = data.toString().trim();
-                if (output) {
-                    console.log(`[AudioEngine STDOUT]: ${output}`);
-                }
-                if (output.includes('RUST_AUDIO_ENGINE_READY')) {
-                    console.log('[Main] Rust Audio Engine ready signal received.');
-                    finishReady();
-                }
-            });
-
-            audioEngineProcess.stderr.on('data', (data) => {
-                const logLine = data.toString().trim();
-                if (logLine && !logLine.includes('GET /state HTTP/1.1')) {
-                    const logMethod = isAudioEngineStopping ? console.warn : console.error;
-                    logMethod(`[AudioEngine STDERR]: ${logLine}`);
-                }
-            });
-
-            audioEngineProcess.on('close', (code) => {
-                console.log(`[Main] Audio Engine process exited with code ${code}`);
-                clearTimeout(readyTimeout);
-                audioEngineProcess = null;
-                audioEngineStopPromise = null;
-                isAudioEngineStopping = false;
-                if (!settled) {
-                    finishError(new Error(`Audio Engine exited before ready (code ${code}).`));
-                }
-            });
-
-            audioEngineProcess.on('error', (err) => {
-                console.error('[Main] Failed to start Audio Engine process.', err);
-                finishError(err);
-            });
-
-            // stdout may be block-buffered when piped; HTTP polling is the reliable readiness signal.
-            try {
-                await waitForAudioEngineReady(15000);
-                console.log('[Main] Rust Audio Engine is ready (HTTP health check).');
-                finishReady();
-            } catch (error) {
-                finishError(error);
-            }
-        } catch (error) {
-            reject(error);
-        }
+        audioEngineProcess.on('error', (err) => {
+            console.error('[Main] Failed to start Audio Engine process.', err);
+            clearTimeout(readyTimeout);
+            reject(err);
+        });
     });
 }
 
@@ -444,10 +385,6 @@ function createWindow() {
         }, 3000); // 3-second delay
 
         mainWindow.show();
-
-        if (desktopHandlers.getDesktopWindow()) {
-            desktopHandlers.notifyDesktopConnectionStatus('Desktop window is ready.');
-        }
     });
 
     mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
@@ -1149,10 +1086,11 @@ if (!gotTheLock) {
         // 当使用 --desktop-only 参数启动时，在所有 IPC 初始化完成后自动打开桌面窗口
         if (isAutoOpenDesktop) {
             console.log('[Main] --desktop-only flag detected. Auto-opening desktop window after full initialization.');
+            // 延迟打开，确保主窗口已完全就绪
             setTimeout(async () => {
                 await desktopHandlers.openDesktopWindow();
                 console.log('[Main] Desktop window auto-opened.');
-            }, 2500);
+            }, 1000);
         }
     });
 
@@ -1294,7 +1232,8 @@ if (!gotTheLock) {
             return;
         }
 
-        const fullWsUrl = `${wsUrl}/VCPlog/VCP_Key=${wsKey}`;
+        const vcpLogDeviceName = 'VCPChat-Desktop';
+        const fullWsUrl = `${wsUrl}/VCPlog/VCP_Key=${wsKey}?deviceName=${encodeURIComponent(vcpLogDeviceName)}`;
 
         if (vcpLogWebSocket && (vcpLogWebSocket.readyState === WebSocket.OPEN || vcpLogWebSocket.readyState === WebSocket.CONNECTING)) {
             console.log('VCPLog WebSocket 已连接或正在连接。');

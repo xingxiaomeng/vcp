@@ -288,25 +288,19 @@ impl AudioPlayer {
         let shared_state = Arc::clone(&self.shared_state);
         let cmd_tx = self.cmd_tx.clone();
         let config = self.config.clone();
-        let _device_id = self.device_id;
+        let device_id = self.device_id;
         let loudness_enabled = self.loudness_enabled;
 
         // Spawn background thread for decoding
         thread::spawn(move || {
-            let decode_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                Self::decode_file_internal(
-                    &path_owned,
-                    credentials_owned.as_ref(),
-                    &config,
-                    &shared_state,
-                    loudness_enabled,
-                )
-            }));
-
-            let result = match decode_result {
-                Ok(result) => result,
-                Err(_) => Err("Internal decoder panic while loading track".to_string()),
-            };
+            let result = Self::decode_file_internal(
+                &path_owned,
+                credentials_owned.as_ref(),
+                &config,
+                device_id,
+                &shared_state,
+                loudness_enabled,
+            );
 
             match result {
                 Ok(load_result) => {
@@ -338,6 +332,7 @@ impl AudioPlayer {
         path: &str,
         credentials: Option<&crate::decoder::HttpCredentials>,
         config: &AppConfig,
+        device_id: Option<usize>,
         shared_state: &Arc<SharedState>,
         _loudness_enabled: bool,
     ) -> Result<state::LoadResult, String> {
@@ -354,11 +349,18 @@ impl AudioPlayer {
         let original_sr = info.sample_rate;
         let channels = info.channels;
 
-        // Keep native sample rate during decode unless explicit upsampling is configured.
-        // Never call cpal from this background thread — querying WASAPI here crashes on Windows.
         let target_sr = config.target_samplerate
-            .filter(|&sr| sr > 0)
-            .unwrap_or(original_sr);
+            .unwrap_or_else(|| {
+                let host = cpal::default_host();
+                let device = match device_id {
+                    Some(id) => host.output_devices().ok().and_then(|mut d| d.nth(id)),
+                    None => host.default_output_device(),
+                };
+                device
+                    .and_then(|d| d.default_output_config().ok())
+                    .map(|c| c.sample_rate().0)
+                    .unwrap_or(original_sr)
+            });
 
         let need_resample = target_sr != original_sr;
         let estimated_input_frames = info.total_frames.unwrap_or(0) as usize;

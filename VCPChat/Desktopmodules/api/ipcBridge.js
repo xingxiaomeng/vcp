@@ -113,21 +113,9 @@
                             vchatApps,
                             systemTools,
                             builtinWidgets: [
-                                { name: '天气预报', builtinId: 'builtinWeather' },
-                                { name: '今日热点', builtinId: 'builtinNews' },
-                                { name: 'AI 翻译', builtinId: 'builtinTranslate' },
-                                { name: '音乐播放条', builtinId: 'builtinMusic' },
-                                { name: '应用托盘', builtinId: 'builtinAppTray' },
-                                { name: '性能监视器', builtinId: 'builtinPerformanceMonitor' },
-                                { name: 'CPU 监控', builtinId: 'builtinCpuMonitor' },
-                                { name: 'RAM 监控', builtinId: 'builtinMemoryMonitor' },
-                                { name: '磁盘监控', builtinId: 'builtinDiskMonitor' },
-                                { name: '网络监控', builtinId: 'builtinNetworkMonitor' },
-                                { name: 'GPU 监控', builtinId: 'builtinGpuMonitor' },
-                                { name: '电池监控', builtinId: 'builtinBatteryMonitor' },
-                                { name: 'Docker 监控', builtinId: 'builtinDockerMonitor' },
-                                { name: '传感器监控', builtinId: 'builtinSensorsMonitor' },
-                                { name: '进程监视器', builtinId: 'builtinProcessMonitor' },
+                                { name: 'Weather Widget', builtinId: 'builtinWeather' },
+                                { name: 'Music Widget', builtinId: 'builtinMusic' },
+                                { name: 'App Tray', builtinId: 'builtinAppTray' },
                             ],
                         },
                     });
@@ -170,24 +158,12 @@
                     } = payload;
 
                     const builtinKey = builtinWidgetKey || metricComponent;
-                    if (builtinKey) {
-                        let createdWidgetId = widgetId;
-                        const beforeIds = new Set(state.widgets.keys());
-
-                        if (window.VCPDesktop[builtinKey]?.spawn) {
-                            window.VCPDesktop[builtinKey].spawn();
-                            const newId = Array.from(state.widgets.keys()).find((id) => !beforeIds.has(id));
-                            createdWidgetId = newId || widgetId || builtinKey;
-                        } else if (window.VCPDesktop.metricWidgets?.spawn) {
-                            const spawnResult = window.VCPDesktop.metricWidgets.spawn(builtinKey, {
-                                ...options,
-                                widgetId,
-                            });
-                            createdWidgetId = spawnResult?.widgetId || widgetId;
-                        } else {
-                            throw new Error(`Unknown builtin widget: ${builtinKey}`);
-                        }
-
+                    if (builtinKey && window.VCPDesktop.metricWidgets?.spawn) {
+                        const spawnResult = window.VCPDesktop.metricWidgets.spawn(builtinKey, {
+                            ...options,
+                            widgetId,
+                        });
+                        const createdWidgetId = spawnResult?.widgetId || widgetId;
                         const builtinWidgetData = state.widgets.get(createdWidgetId);
                         const savedResult = autoSave && saveName && builtinWidgetData
                             ? await _autoSaveWidget(createdWidgetId, saveName, builtinWidgetData).catch(() => null)
@@ -369,19 +345,6 @@
             desktopApi.onDesktopRemoteRequest((request) => {
                 handleDesktopRemoteRpcRequest(request);
             });
-        }
-
-        if (desktopApi?.desktopRequestHandshake) {
-            desktopApi.desktopRequestHandshake()
-                .then((result) => {
-                    if (result?.connected) {
-                        state.isConnected = true;
-                        status.update('connected', result.message || '已连接');
-                    }
-                })
-                .catch((err) => {
-                    console.warn('[Desktop IPC] Initial handshake failed:', err?.message || err);
-                });
         }
 
         if (desktopApi?.onDesktopRemoteSetWallpaper) {

@@ -522,7 +522,8 @@ pub mod wasapi_exclusive {
                     resample_output_f64.extend(temp_f32_buffer[..temp_samples].iter().map(|&f| f as f64));
                     let temp_f64 = &resample_output_f64;
                     
-                    let mut resample_scratch = Vec::with_capacity(temp_f64.len() * 2 + 256);
+                    let needed_output = temp_f64.len() * 2 + 256;
+                    let mut resample_scratch = vec![0.0f64; needed_output]; // resampler needs separate output buffer
                     let written_frames = rs.process_chunk_into(temp_f64, &mut resample_scratch);
                     
                     let new_samples = written_frames * channels;

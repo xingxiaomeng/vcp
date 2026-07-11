@@ -416,28 +416,6 @@ pub struct StreamingDecoder {
     finished: bool,
 }
 
-/// Infer container extension from magic bytes when filename extension is wrong.
-fn sniff_container_extension(header: &[u8]) -> Option<&'static str> {
-    if header.starts_with(b"OggS") {
-        return Some("ogg");
-    }
-    if header.starts_with(b"fLaC") {
-        return Some("flac");
-    }
-    if header.starts_with(b"RIFF") && header.len() >= 12 && &header[8..12] == b"WAVE" {
-        return Some("wav");
-    }
-    if header.len() >= 8 && &header[4..8] == b"ftyp" {
-        return Some("mp4");
-    }
-    if header.starts_with(b"ID3")
-        || header.len() >= 2 && header[0] == 0xFF && (header[1] & 0xE0) == 0xE0
-    {
-        return Some("mp3");
-    }
-    None
-}
-
 impl StreamingDecoder {
     /// Open a local file path
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, DecoderError> {
@@ -597,15 +575,10 @@ impl StreamingDecoder {
                 }
             }
         } else {
-            let mut file = File::open(path.as_ref())?;
-            let mut sniff = [0u8; 12];
-            let sniff_len = file.read(&mut sniff).unwrap_or(0);
-            file.seek(SeekFrom::Start(0))?;
+            let file = File::open(path.as_ref())?;
             let mss = MediaSourceStream::new(Box::new(file), Default::default());
             let mut hint = Hint::new();
-            if let Some(ext) = sniff_container_extension(&sniff[..sniff_len]) {
-                hint.with_extension(ext);
-            } else if let Some(ext) = path.as_ref().extension().and_then(|e| e.to_str()) {
+            if let Some(ext) = path.as_ref().extension().and_then(|e| e.to_str()) {
                 hint.with_extension(ext);
             }
             (mss, hint)
