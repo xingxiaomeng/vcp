@@ -11,7 +11,7 @@
     // 音乐播放条 HTML 模板
     var MUSIC_HTML = [
         '<style>',
-        '.vm-bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: linear-gradient(135deg, rgba(20,20,35,0.88), rgba(35,25,50,0.82)); border-radius: 24px; color: #fff; font-family: "Segoe UI", -apple-system, sans-serif; backdrop-filter: blur(12px); min-width: 300px; white-space: nowrap; user-select: none; }',
+        '.vm-bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: linear-gradient(135deg, rgba(20,20,35,0.88), rgba(35,25,50,0.82)); border-radius: 24px; color: #fff; font-family: "Segoe UI", -apple-system, sans-serif; backdrop-filter: blur(12px); width: 100%; min-width: 0; box-sizing: border-box; white-space: nowrap; user-select: none; }',
         '.vm-art { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #667eea, #764ba2); display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; animation: vm-spin 8s linear infinite paused; }',
         '.vm-art.playing { animation-play-state: running; }',
         '@keyframes vm-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }',
@@ -24,7 +24,7 @@
         '.vm-btn-play { width: 34px; height: 34px; background: rgba(255,255,255,0.12); font-size: 16px; }',
         '.vm-progress { position: absolute; bottom: 0; left: 16px; right: 16px; height: 3px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden; cursor: pointer; }',
         '.vm-progress-fill { height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); width: 0%; border-radius: 2px; transition: width 0.3s ease; }',
-        '.vm-container { position: relative; padding-bottom: 6px; }',
+        '.vm-container { position: relative; padding-bottom: 6px; width: 100%; height: 100%; box-sizing: border-box; }',
         '.vm-offline { padding: 12px 20px; background: rgba(20,20,35,0.85); border-radius: 24px; color: rgba(255,255,255,0.4); font-size: 12px; text-align: center; backdrop-filter: blur(12px); }',
         '</style>',
         '<div class="vm-container">',
@@ -157,6 +157,7 @@
             y: options.y != null ? options.y : window.innerHeight - 100,
             width: options.width || 360,
             height: options.height || 60,
+            lockSize: !!options.lockSize,
         });
 
         widgetData.contentBuffer = MUSIC_HTML;
@@ -164,7 +165,7 @@
         widget.processInlineStyles(widgetData);
         widgetData.isConstructing = false;
         widgetData.element.classList.remove('constructing');
-        widget.autoResize(widgetData);
+        if (!options.lockSize) widget.autoResize(widgetData);
 
         setTimeout(function () {
             widget.processInlineScripts(widgetData);

@@ -57,8 +57,8 @@
 
         return [
             '<style>',
-            '.vdmc-root { height: 100%; min-width: 280px; color: #fff; font-family: "Segoe UI", -apple-system, sans-serif; }',
-            '.vdmc-panel { height: 100%; display: flex; flex-direction: column; background: linear-gradient(135deg, rgba(18, 22, 34, 0.92), rgba(30, 18, 42, 0.88)); border-radius: 18px; padding: 16px; backdrop-filter: blur(16px); box-shadow: 0 16px 48px rgba(0,0,0,0.24); }',
+            '.vdmc-root { width: 100%; height: 100%; min-width: 0; min-height: 0; box-sizing: border-box; color: #fff; font-family: "Segoe UI", -apple-system, sans-serif; }',
+            '.vdmc-panel { height: 100%; width: 100%; display: flex; flex-direction: column; background: linear-gradient(135deg, rgba(18, 22, 34, 0.92), rgba(30, 18, 42, 0.88)); border-radius: 18px; padding: 16px; backdrop-filter: blur(16px); box-shadow: 0 16px 48px rgba(0,0,0,0.24); box-sizing: border-box; overflow: hidden; }',
             '.vdmc-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }',
             '.vdmc-title { font-size: 16px; font-weight: 600; }',
             '.vdmc-subtitle { font-size: 11px; opacity: 0.62; margin-top: 2px; line-height: 1.4; white-space: pre-line; }',
@@ -395,6 +395,8 @@
             y: settings.y != null ? settings.y : position.y,
             width: settings.width || definition.width,
             height: settings.height || definition.height,
+            lockSize: !!settings.lockSize,
+            fixedSize: true,
         });
 
         const html = buildMetricWidgetHtml(definition);

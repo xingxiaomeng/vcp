@@ -82,6 +82,21 @@
                 overflow: auto;
             }
             * { box-sizing: border-box; }
+            .widget-inner-content {
+                width: 100%;
+                height: 100%;
+                min-height: 100%;
+            }
+            .widget-inner-content > *:not(style):not(script) {
+                max-width: 100%;
+            }
+            .widget-inner-content > div:first-of-type,
+            .widget-inner-content > section:first-of-type,
+            .widget-inner-content > article:first-of-type {
+                width: 100%;
+                min-height: 100%;
+                box-sizing: border-box;
+            }
             ::-webkit-scrollbar { width: 4px; }
             ::-webkit-scrollbar-track { background: transparent; }
             ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.3); border-radius: 2px; }
@@ -100,8 +115,11 @@
             widget.classList.remove('entering');
         }, { once: true });
 
-        // 拖拽
+        // 拖拽 + 八向缩放（所有挂件统一具备）
         drag.setup(widget, grip);
+        if (drag.setupResize) {
+            drag.setupResize(widget);
+        }
 
         // 右键菜单
         widget.addEventListener('contextmenu', (e) => {
@@ -127,11 +145,17 @@
             zIndex: z,
             savedName: null,
             savedId: null,
+            fixedSize: !!options.lockSize || !!options.fixedSize,
+            userResized: !!options.lockSize || !!options.userResized,
             _resizeObserver: null,
             _intervals: [],
             _timeouts: [],
             _windowListeners: [],
         };
+
+        if (widgetData.userResized) {
+            widget.classList.add('user-resized');
+        }
 
         // 监听 Shadow DOM 内容变化，自动调整尺寸
         // 这确保异步脚本（如天气数据加载）修改内容后挂件能自动适配
@@ -309,8 +333,8 @@
      * @param {object} widgetData
      */
     function autoResizeWidget(widgetData) {
-        // 如果挂件标记了固定尺寸，跳过自动调整
-        if (widgetData.fixedSize) return;
+        // 固定尺寸 / 用户手动缩放后，不再自动改尺寸
+        if (widgetData.fixedSize || widgetData.userResized) return;
 
         const widgetId = widgetData.element?.dataset?.widgetId;
         const currentWidth = parseInt(widgetData.element.style.width) || CONSTANTS.AUTO_RESIZE_MIN_W;

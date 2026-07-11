@@ -674,6 +674,7 @@
                         y: w.y,
                         width: w.width,
                         height: w.height,
+                        lockSize: true,
                     };
                     if (spawnKey && D[spawnKey] && D[spawnKey].spawn) {
                         D[spawnKey].spawn(geometry);

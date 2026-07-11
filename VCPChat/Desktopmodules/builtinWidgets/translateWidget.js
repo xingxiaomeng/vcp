@@ -14,7 +14,7 @@
     // 翻译挂件 HTML 模板
     var TRANSLATE_HTML = [
         '<style>',
-        '.vt-container { padding: 16px; background: linear-gradient(135deg, rgba(20,28,58,0.92), rgba(30,40,70,0.88)); border-radius: 12px; color: #fff; font-family: "Segoe UI", -apple-system, sans-serif; min-width: 320px; backdrop-filter: blur(12px); display: flex; flex-direction: column; gap: 12px; }',
+        '.vt-container { padding: 16px; background: linear-gradient(135deg, rgba(20,28,58,0.92), rgba(30,40,70,0.88)); border-radius: 12px; color: #fff; font-family: "Segoe UI", -apple-system, sans-serif; width: 100%; height: 100%; min-width: 0; min-height: 0; box-sizing: border-box; backdrop-filter: blur(12px); display: flex; flex-direction: column; gap: 12px; overflow: auto; }',
         '.vt-header { display: flex; align-items: center; justify-content: space-between; }',
         '.vt-title { font-size: 15px; font-weight: 600; }',
         '.vt-title-icon { font-size: 18px; margin-right: 6px; }',
@@ -291,6 +291,7 @@
             y: options.y != null ? options.y : CONSTANTS.TITLE_BAR_HEIGHT + 40,
             width: options.width || 380,
             height: options.height || 520,
+            lockSize: !!options.lockSize,
         });
 
         widgetData.contentBuffer = TRANSLATE_HTML;
@@ -298,7 +299,7 @@
         widget.processInlineStyles(widgetData);
         widgetData.isConstructing = false;
         widgetData.element.classList.remove('constructing');
-        widget.autoResize(widgetData);
+        if (!options.lockSize) widget.autoResize(widgetData);
 
         // 延迟执行脚本
         setTimeout(function () {

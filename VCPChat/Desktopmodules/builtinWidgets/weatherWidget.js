@@ -11,7 +11,7 @@
     // 天气挂件 HTML 模板
     var WEATHER_HTML = [
         '<style>',
-        '.vw-container { padding: 20px; background: linear-gradient(135deg, rgba(30,60,114,0.85), rgba(42,82,152,0.75)); border-radius: 12px; color: #fff; font-family: "Segoe UI", -apple-system, sans-serif; min-width: 280px; backdrop-filter: blur(10px); }',
+        '.vw-container { padding: 20px; background: linear-gradient(135deg, rgba(30,60,114,0.85), rgba(42,82,152,0.75)); border-radius: 12px; color: #fff; font-family: "Segoe UI", -apple-system, sans-serif; width: 100%; height: 100%; min-width: 0; min-height: 0; box-sizing: border-box; backdrop-filter: blur(10px); overflow: auto; }',
         '.vw-loading { text-align: center; padding: 20px; opacity: 0.6; }',
         '.vw-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }',
         '.vw-city { font-size: 13px; opacity: 0.7; }',
@@ -161,6 +161,7 @@
             y: options.y != null ? options.y : CONSTANTS.TITLE_BAR_HEIGHT + 20,
             width: options.width || 320,
             height: options.height || 280,
+            lockSize: !!options.lockSize,
         });
 
         widgetData.contentBuffer = WEATHER_HTML;
@@ -168,7 +169,7 @@
         widget.processInlineStyles(widgetData);
         widgetData.isConstructing = false;
         widgetData.element.classList.remove('constructing');
-        widget.autoResize(widgetData);
+        if (!options.lockSize) widget.autoResize(widgetData);
 
         // 延迟执行脚本
         setTimeout(function () {

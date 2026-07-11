@@ -93,6 +93,83 @@
     );
 }
 
+/* --- 八向缩放手柄 --- */
+.desktop-widget-resize-handles {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 20;
+}
+
+.desktop-widget-resize-handle {
+    position: absolute;
+    pointer-events: auto;
+    background: transparent;
+    opacity: 0;
+    transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.desktop-widget:hover .desktop-widget-resize-handle,
+.desktop-widget.resizing .desktop-widget-resize-handle {
+    opacity: 1;
+}
+
+.desktop-widget-resize-n,
+.desktop-widget-resize-s {
+    left: 10px;
+    right: 10px;
+    height: 8px;
+}
+
+.desktop-widget-resize-n { top: -3px; }
+.desktop-widget-resize-s { bottom: -3px; }
+
+.desktop-widget-resize-e,
+.desktop-widget-resize-w {
+    top: 10px;
+    bottom: 10px;
+    width: 8px;
+}
+
+.desktop-widget-resize-e { right: -3px; }
+.desktop-widget-resize-w { left: -3px; }
+
+.desktop-widget-resize-ne,
+.desktop-widget-resize-nw,
+.desktop-widget-resize-se,
+.desktop-widget-resize-sw {
+    width: 12px;
+    height: 12px;
+}
+
+.desktop-widget-resize-ne { top: -4px; right: -4px; }
+.desktop-widget-resize-nw { top: -4px; left: -4px; }
+.desktop-widget-resize-se { bottom: -4px; right: -4px; }
+.desktop-widget-resize-sw { bottom: -4px; left: -4px; }
+
+.desktop-widget-resize-se::after,
+.desktop-widget-resize-sw::after,
+.desktop-widget-resize-ne::after,
+.desktop-widget-resize-nw::after {
+    content: '';
+    position: absolute;
+    width: 7px;
+    height: 7px;
+    border-radius: 2px;
+    background: rgba(120, 180, 255, 0.55);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+.desktop-widget-resize-se::after { right: 1px; bottom: 1px; }
+.desktop-widget-resize-sw::after { left: 1px; bottom: 1px; }
+.desktop-widget-resize-ne::after { right: 1px; top: 1px; }
+.desktop-widget-resize-nw::after { left: 1px; top: 1px; }
+
+.desktop-widget.resizing {
+    box-shadow: 0 0 0 1px rgba(100, 180, 255, 0.45), 0 8px 28px rgba(0, 0, 0, 0.35);
+    user-select: none;
+}
+
 /* --- 挂件内容区 --- */
 .desktop-widget-content {
     width: 100%;
@@ -198,6 +275,11 @@
 }
 
 .desktop-locked .desktop-widget-grip {
+    display: none;
+    pointer-events: none;
+}
+
+.desktop-locked .desktop-widget-resize-handles {
     display: none;
     pointer-events: none;
 }

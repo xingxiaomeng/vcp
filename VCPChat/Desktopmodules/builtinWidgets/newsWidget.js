@@ -11,7 +11,7 @@
     // 新闻挂件 HTML 模板（使用数组拼接避免模板字符串截断）
     var NEWS_HTML = [
         '<style>',
-        '.vn-container { padding: 0; background: linear-gradient(135deg, rgba(18,18,32,0.92), rgba(28,22,42,0.88)); border-radius: 12px; color: #fff; font-family: "Segoe UI", -apple-system, sans-serif; min-width: 260px; max-width: 320px; max-height: 480px; display: flex; flex-direction: column; backdrop-filter: blur(12px); overflow: hidden; }',
+        '.vn-container { padding: 0; background: linear-gradient(135deg, rgba(18,18,32,0.92), rgba(28,22,42,0.88)); border-radius: 12px; color: #fff; font-family: "Segoe UI", -apple-system, sans-serif; width: 100%; height: 100%; min-width: 0; min-height: 0; max-width: none; max-height: none; display: flex; flex-direction: column; box-sizing: border-box; backdrop-filter: blur(12px); overflow: hidden; }',
         '.vn-header { padding: 14px 16px 0; flex-shrink: 0; }',
         '.vn-title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }',
         '.vn-title { font-size: 15px; font-weight: 600; }',
@@ -241,6 +241,7 @@
             y: options.y != null ? options.y : CONSTANTS.TITLE_BAR_HEIGHT + 20,
             width: options.width || 300,
             height: options.height || 440,
+            lockSize: !!options.lockSize,
         });
 
         widgetData.contentBuffer = NEWS_HTML;
@@ -248,7 +249,7 @@
         widget.processInlineStyles(widgetData);
         widgetData.isConstructing = false;
         widgetData.element.classList.remove('constructing');
-        widget.autoResize(widgetData);
+        if (!options.lockSize) widget.autoResize(widgetData);
 
         // 延迟执行脚本
         setTimeout(function () {

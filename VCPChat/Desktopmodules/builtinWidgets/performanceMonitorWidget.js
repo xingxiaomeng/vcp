@@ -27,7 +27,10 @@
             <style>
                 .perf-root { 
                     height: 100%; 
-                    min-width: 320px; 
+                    width: 100%;
+                    min-width: 0; 
+                    min-height: 0;
+                    box-sizing: border-box;
                     color: #fff; 
                     font-family: "Inter", "Segoe UI", sans-serif; 
                     padding: 16px;
@@ -37,6 +40,7 @@
                     box-shadow: 0 20px 50px rgba(0,0,0,0.3);
                     display: flex;
                     flex-direction: column;
+                    overflow: hidden;
                 }
                 .perf-header { margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
                 .perf-icon { font-size: 20px; }
@@ -223,6 +227,7 @@
             y: options.y != null ? options.y : CONSTANTS.TITLE_BAR_HEIGHT + 20,
             width: options.width || 320,
             height: options.height || 480,
+            lockSize: !!options.lockSize,
         });
 
         // 2. 注入 HTML 内容
@@ -235,7 +240,7 @@
         // 4. 完成构建状态
         widgetData.isConstructing = false;
         widgetData.element.classList.remove('constructing');
-        widget.autoResize(widgetData);
+        if (!options.lockSize) widget.autoResize(widgetData);
 
         // 5. 延迟解析并运行内部脚本
         setTimeout(function () {
