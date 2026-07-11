@@ -133,7 +133,6 @@ class NonStreamHandler {
       maxVCPLoopNonStream,
       apiRetries,
       apiRetryDelay,
-      RAGMemoRefresh,
       enableRoleDivider,
       enableRoleDividerInLoop,
       roleDividerIgnoreList,
@@ -145,10 +144,8 @@ class NonStreamHandler {
       abortController,
       originalBody,
       clientIp,
-      _refreshRagBlocksIfNeeded,
       fetchWithRetry,
       vcpToolUseForbidden,
-      apiConnectionTimeoutMs,
       semanticModelFallbackCandidates,
       oneRingResponseMeta,
       shouldProcessMedia,
@@ -217,7 +214,7 @@ class NonStreamHandler {
         body: JSON.stringify(body),
         signal: abortController.signal,
       },
-      { retries: apiRetries, delay: apiRetryDelay, debugMode: DEBUG_MODE, connectionTimeout: apiConnectionTimeoutMs, modelFallbackCandidates: semanticModelFallbackCandidates }
+      { retries: apiRetries, delay: apiRetryDelay, debugMode: DEBUG_MODE, modelFallbackCandidates: semanticModelFallbackCandidates }
     );
 
     const firstReadResult = await readNonStreamResponseWithSemanticRetry({
@@ -302,7 +299,7 @@ class NonStreamHandler {
             const isError = !result.success || (result.raw && this.context.isToolResultError(result.raw));
 
             if (isError) {
-              archeryStatusSummaryItems.push(`${toolCall.name} 调用失败${result.recordId ? ` (记录ID: ${result.recordId})` : ''}`);
+              archeryStatusSummaryItems.push(`${toolCall.name} 调用失败`);
               archeryErrorContents.push({
                 type: 'text',
                 text: `[异步工具 "${toolCall.name}" 返回了错误，请注意]:\n${result.content[0].text}`
@@ -436,7 +433,7 @@ class NonStreamHandler {
           );
           const isTimeout = isError && !isRejected && /超时|timeout|timed\s*out|DIRECT_TOOL_TIMEOUT|TIMEOUT/i.test(errorText);
           const statusText = isRejected ? '调用拒绝' : (isTimeout ? '调用超时' : (isError ? '调用失败' : '调用成功'));
-          toolStatusSummaryItems.push(`${toolCall.name} ${statusText}${result?.recordId ? ` (记录ID: ${result.recordId})` : ''}`);
+          toolStatusSummaryItems.push(`${toolCall.name} ${statusText}`);
 
           if (shouldShowVCP || forceThisOne) {
             const vcpText = vcpInfoHandler.streamVcpInfo(null, originalBody.model, toolCall.name, result.success ? 'success' : 'error', result.raw || result.error, abortController);
@@ -462,16 +459,9 @@ class NonStreamHandler {
            conversationHistoryForClient.push('\n<<<[END_ROLE_DIVIDE_USER]>>>\n');
         }
 
-        const toolResultsTextForRAG = JSON.stringify(combinedToolResultsForAI, (k, v) =>
+        const toolResultsText = JSON.stringify(combinedToolResultsForAI, (k, v) =>
           (k === 'url' || k === 'image_url') && typeof v === 'string' && v.startsWith('data:') ? "[Omitted]" : v
         );
-
-        if (RAGMemoRefresh) {
-          currentMessagesForNonStreamLoop = await _refreshRagBlocksIfNeeded(currentMessagesForNonStreamLoop, {
-            lastAiMessage: currentAIContentForLoop,
-            toolResultsText: toolResultsTextForRAG
-          }, pluginManager, DEBUG_MODE);
-        }
 
         const hasImage = combinedToolResultsForAI.some(item => item.type === 'image_url');
         const translatedToolResultsForAI = hasImage
@@ -482,7 +472,7 @@ class NonStreamHandler {
           : null;
         const finalToolPayloadForAI = hasImage
           ? translatedToolResultsForAI
-          : `<!-- VCP_TOOL_PAYLOAD -->\n${toolResultsTextForRAG}`;
+          : `<!-- VCP_TOOL_PAYLOAD -->\n${toolResultsText}`;
 
         currentMessagesForNonStreamLoop.push({ role: 'user', content: finalToolPayloadForAI });
 

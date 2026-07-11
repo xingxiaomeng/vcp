@@ -311,242 +311,18 @@ function resolveStaticFoldFull(foldObj) {
 
 // 🌟 新增：动态折叠协议处理器
 async function resolveDynamicFoldProtocol(foldObj, context, placeholderKey) {
-    if (!foldObj || !foldObj.vcp_dynamic_fold || !Array.isArray(foldObj.fold_blocks) || foldObj.fold_blocks.length === 0) {
+    const blocks = getNormalizedFoldBlocks(foldObj);
+    if (blocks.length === 0) {
         return `[无效的动态折叠数据结构: ${placeholderKey}]`;
     }
 
-    const blocks = foldObj.fold_blocks
-        .filter(block => block && typeof block.content === 'string');
-    const blocksByThreshold = [...blocks].sort((a, b) => (b.threshold || 0) - (a.threshold || 0));
-    const fallbackBlock = [...blocksByThreshold].reverse().find(block => block.content)
-        || { threshold: 0.0, content: '' };
-
-    try {
-        const ragPlugin = context.pluginManager.messagePreprocessors?.get('RAGDiaryPlugin');
-        if (!ragPlugin || typeof ragPlugin.getSingleEmbeddingCached !== 'function') {
-            if (context.DEBUG_MODE) console.log(`[DynamicFold] RAGDiaryPlugin 不可用，返回基础内容 (${placeholderKey})`);
-            return fallbackBlock.content;
-        }
-
-        const contextMessages = context.messages || [];
-        const lastUserMessage = findLastRealUserMessage(contextMessages, {
-            sanitize: typeof ragPlugin.sanitizeForEmbedding === 'function'
-                ? ragPlugin.sanitizeForEmbedding.bind(ragPlugin)
-                : null
-        });
-        const lastAiMessageIndex = contextMessages.findLastIndex(m => m.role === 'assistant');
-
-        let userContent = lastUserMessage.sanitizedContent || '';
-        let aiContent = null;
-
-        if (lastAiMessageIndex > -1) {
-            const m = contextMessages[lastAiMessageIndex];
-            aiContent = extractTextFromMessageContent(m.content);
-        }
-
-        if (!userContent) {
-            if (context.DEBUG_MODE) console.log(`[DynamicFold] 未找到 User 文本消息，返回基础内容 (${placeholderKey})`);
-            return fallbackBlock.content;
-        }
-
-        if (typeof ragPlugin.sanitizeForEmbedding === 'function') {
-            if (aiContent) {
-                const originalAiContent = aiContent;
-                aiContent = ragPlugin.sanitizeForEmbedding(aiContent, 'assistant');
-                if (context.DEBUG_MODE && originalAiContent.length !== aiContent.length) {
-                    console.log('[DynamicFold] AI content was sanitized via unified sanitizer.');
-                }
-            }
-        } else {
-            if (typeof ragPlugin._stripSystemNotification === 'function') {
-                if (userContent) {
-                    userContent = ragPlugin._stripSystemNotification(userContent);
-                    userContent = ragPlugin._stripHtml(userContent);
-                    userContent = ragPlugin._stripEmoji(userContent);
-                    userContent = ragPlugin._stripToolMarkers(userContent);
-                }
-            }
-            if (aiContent && typeof ragPlugin._stripHtml === 'function') {
-                aiContent = ragPlugin._stripHtml(aiContent);
-                aiContent = ragPlugin._stripEmoji(aiContent);
-                aiContent = ragPlugin._stripToolMarkers(aiContent);
-            }
-        }
-
-        const config = ragPlugin.ragParams?.RAGDiaryPlugin || {};
-        const mainWeights = config.mainSearchWeights || [0.7, 0.3];
-        const fuzzyConfig = ragPlugin.ragParams?.ContextFoldingV2?.fuzzyEmbedding || {};
-        const fuzzyOptions = {
-            threshold: Number.isFinite(Number(fuzzyConfig.threshold)) ? Number(fuzzyConfig.threshold) : 0.985,
-            minLength: Number.isFinite(Number(fuzzyConfig.minLength)) ? Number(fuzzyConfig.minLength) : 80,
-            maxScan: Number.isFinite(Number(fuzzyConfig.maxScan)) ? Number(fuzzyConfig.maxScan) : 200,
-            maxLengthDiffRatio: Number.isFinite(Number(fuzzyConfig.maxLengthDiffRatio)) ? Number(fuzzyConfig.maxLengthDiffRatio) : 0.02,
-            maxLengthDiffAbs: Number.isFinite(Number(fuzzyConfig.maxLengthDiffAbs)) ? Number(fuzzyConfig.maxLengthDiffAbs) : 80
-        };
-
-        // DynamicFold 专用向量获取：精确缓存 → 高阈值 fuzzy 缓存 → Embedding API。
-        // 这里常在 RAGDiaryPlugin 主链路之后运行，AI 文本可能只有极小差异；
-        // 先 fuzzy 复用可避免动态折叠再次向量化同一段 AI 输出。
-        const getDynamicFoldEmbedding = async (text, label = 'unknown') => {
-            if (!text || typeof text !== 'string' || !text.trim()) return null;
-
-            if (typeof ragPlugin._getEmbeddingFromCacheOnly === 'function') {
-                const exact = ragPlugin._getEmbeddingFromCacheOnly(text);
-                if (exact) return exact;
-            }
-
-            if (typeof ragPlugin._findFuzzyEmbeddingFromCache === 'function') {
-                const fuzzy = ragPlugin._findFuzzyEmbeddingFromCache(text, fuzzyOptions);
-
-                if (fuzzy && fuzzy.vector) {
-                    if (context.DEBUG_MODE) {
-                        console.log(
-                            `[DynamicFold] Fuzzy embedding cache hit (${label}): ` +
-                            `sim=${fuzzy.similarity.toFixed(4)}, len=${text.length}/${fuzzy.length}`
-                        );
-                    }
-                    return fuzzy.vector;
-                }
-            }
-
-            return await ragPlugin.getSingleEmbeddingCached(text);
-        };
-
-        const [uVec, aVec] = await Promise.all([
-            userContent ? getDynamicFoldEmbedding(userContent, 'user_context') : Promise.resolve(null),
-            aiContent ? getDynamicFoldEmbedding(aiContent, 'assistant_context') : Promise.resolve(null)
-        ]);
-
-        const userVector = ragPlugin._getWeightedAverageVector([uVec, aVec], mainWeights);
-        if (!userVector) {
-            if (context.DEBUG_MODE) console.log(`[DynamicFold] 获取用户上下文向量失败，返回基础内容 (${placeholderKey})`);
-            return fallbackBlock.content;
-        }
-
-        const vectorCache = new Map();
-        const getDescriptionVector = async (descriptionText) => {
-            const key = String(descriptionText || '').trim();
-            if (!key) return null;
-            if (vectorCache.has(key)) return vectorCache.get(key);
-
-            let descVector = null;
-            if (ragPlugin.vectorDBManager && typeof ragPlugin.vectorDBManager.getPluginDescriptionVector === 'function') {
-                descVector = await ragPlugin.vectorDBManager.getPluginDescriptionVector(
-                    key,
-                    ragPlugin.getSingleEmbeddingCached.bind(ragPlugin)
-                );
-            } else {
-                descVector = await ragPlugin.getSingleEmbeddingCached(key);
-            }
-            vectorCache.set(key, descVector);
-            return descVector;
-        };
-
-        const cosineSimilarity = (vectorA, vectorB) => {
-            if (!vectorA || !vectorB) return 0;
-            let dotProduct = 0;
-            let normA = 0;
-            let normB = 0;
-            const len = Math.min(vectorA.length, vectorB.length);
-            for (let i = 0; i < len; i++) {
-                dotProduct += vectorA[i] * vectorB[i];
-                normA += vectorA[i] * vectorA[i];
-                normB += vectorB[i] * vectorB[i];
-            }
-            return (normA === 0 || normB === 0)
-                ? 0
-                : dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-        };
-
-        const toolboxBlockStrategy = foldObj.dynamic_fold_strategy === 'toolbox_block_similarity';
-
-        let pluginSimilarity = null;
-        const getPluginSimilarity = async () => {
-            if (pluginSimilarity != null) return pluginSimilarity;
-            const descText = foldObj.plugin_description || placeholderKey;
-            const descVector = await getDescriptionVector(descText);
-            if (!descVector) {
-                if (context.DEBUG_MODE) console.log(`[DynamicFold] 获取插件描述向量失败，返回基础内容 (${placeholderKey})`);
-                pluginSimilarity = 0;
-                return pluginSimilarity;
-            }
-            pluginSimilarity = cosineSimilarity(descVector, userVector);
-            if (context.DEBUG_MODE) {
-                console.log(`[DynamicFold] ${placeholderKey} 上下文相似度: ${pluginSimilarity.toFixed(3)} (目标区块数: ${blocks.length})`);
-            }
-            return pluginSimilarity;
-        };
-
-        if (!toolboxBlockStrategy) {
-            const sim = await getPluginSimilarity();
-            for (const block of blocksByThreshold) {
-                const threshold = Number.isFinite(Number(block.threshold)) ? Number(block.threshold) : 0;
-                if (sim >= threshold) {
-                    if (context.DEBUG_MODE) console.log(`[DynamicFold] ${placeholderKey} 命中阈值 >= ${threshold}，展开相关内容。`);
-                    return block.content;
-                }
-            }
-            return fallbackBlock.content;
-        }
-
-        const getThreshold = (block) => Number.isFinite(Number(block.threshold)) ? Number(block.threshold) : 0;
-        const includedContents = [];
-        let hiddenBlocksCount = 0;
-
-        const legacyBlocks = blocks.filter(block => !(typeof block.description === 'string' && block.description.trim()));
-        let activeLegacyBlocks = new Set();
-        if (legacyBlocks.length > 0) {
-            const legacySim = await getPluginSimilarity();
-            const matchedLegacyBlocks = legacyBlocks.filter(block => legacySim >= getThreshold(block));
-            if (matchedLegacyBlocks.length > 0) {
-                activeLegacyBlocks = new Set(matchedLegacyBlocks);
-            } else {
-                const minLegacyThreshold = legacyBlocks.reduce((min, block) => Math.min(min, getThreshold(block)), Infinity);
-                activeLegacyBlocks = new Set(legacyBlocks.filter(block => getThreshold(block) <= minLegacyThreshold));
-            }
-        }
-
-        for (const block of blocks) {
-            const threshold = getThreshold(block);
-            const description = typeof block.description === 'string' ? block.description.trim() : '';
-            const content = block.content;
-
-            if (!description) {
-                if (activeLegacyBlocks.has(block)) {
-                    includedContents.push(content);
-                } else {
-                    hiddenBlocksCount += 1;
-                }
-                continue;
-            }
-
-            const descVector = await getDescriptionVector(description);
-            const sim = cosineSimilarity(descVector, userVector);
-            if (context.DEBUG_MODE) {
-                console.log(`[DynamicFold] ${placeholderKey} 区块描述相似度: ${sim.toFixed(3)} / 阈值 ${threshold.toFixed(3)} / 描述 ${description}`);
-            }
-
-            if (sim >= threshold) {
-                includedContents.push(content);
-            } else {
-                hiddenBlocksCount += 1;
-            }
-        }
-
-        let combinedContent = includedContents.filter(Boolean).join('\n\n---\n\n');
-        if (!combinedContent) {
-            combinedContent = fallbackBlock.content;
-        }
-
-        if (hiddenBlocksCount > 0) {
-            combinedContent += `\n\n*(提示：当前上下文中还隐藏收纳了另外 ${hiddenBlocksCount} 个工具模块分组，您可以通过明确提问或强调相关语境来获得展开。)*`;
-        }
-
-        return combinedContent;
-    } catch (e) {
-        console.error(`[DynamicFold] 处理动态折叠时发生异常 (${placeholderKey}):`, e.message);
-        return fallbackBlock.content;
+    const fallbackBlock = [...blocks]
+        .sort((a, b) => (a.threshold || 0) - (b.threshold || 0))
+        .find(block => block.content) || { content: '' };
+    if (context.DEBUG_MODE) {
+        console.log(`[DynamicFold] 向量知识库已移除，使用基础内容 (${placeholderKey})`);
     }
+    return fallbackBlock.content;
 }
 
 function applyDetectorRules(text, role, context = {}) {
@@ -616,7 +392,7 @@ async function replaceOtherVariables(text, model, role, context) {
         for (const placeholder of uniquePlaceholders) {
             // 从 {{SarPrompt4}} 中提取 SarPrompt4
             const promptKey = placeholder.substring(2, placeholder.length - 2);
-
+            
             // 从 sarPromptManager 中查找匹配的 promptKey
             const prompts = sarPromptManager.getAllPrompts();
             const group = prompts.find(g => g.promptKey === promptKey);
@@ -624,9 +400,8 @@ async function replaceOtherVariables(text, model, role, context) {
 
             if (group && group.models && group.content) {
                 const modelList = group.models.map(m => m.trim().toLowerCase());
-                const matchMode = group.matchMode || 'exact';
-                // 检查当前模型是否匹配（支持exact/includes两种模式）
-                if (model && sarPromptManager.isModelMatch(modelList, model.toLowerCase(), matchMode)) {
+                // 检查当前模型是否在列表中
+                if (model && modelList.includes(model.toLowerCase())) {
                     let promptValue = group.content;
                     // 模型匹配，准备注入的文本
                     if (typeof promptValue === 'string' && promptValue.toLowerCase().endsWith('.txt')) {
@@ -645,35 +420,6 @@ async function replaceOtherVariables(text, model, role, context) {
             // 对当前文本中所有匹配的占位符进行替换
             const placeholderRegExp = new RegExp(placeholder.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g');
             processedText = processedText.replace(placeholderRegExp, replacementText);
-        }
-
-        // === {{SarPromptAll}} 批量模型匹配注入 ===
-        if (processedText.includes('{{SarPromptAll}}')) {
-            const allPrompts = sarPromptManager.getAllPrompts();
-            const matchedContents = [];
-
-            for (const group of allPrompts) {
-                if (!group.models || !group.content) continue;
-                const modelList = group.models.map(m => m.trim().toLowerCase());
-                const matchMode = group.matchMode || 'exact';
-
-                if (model && sarPromptManager.isModelMatch(modelList, model.toLowerCase(), matchMode)) {
-                    let promptValue = group.content;
-                    // .txt 文件引用支持（复用现有模式）
-                    if (typeof promptValue === 'string' && promptValue.toLowerCase().endsWith('.txt')) {
-                        const fileContent = await tvsManager.getContent(promptValue);
-                        if (fileContent.startsWith('[变量文件') || fileContent.startsWith('[处理变量文件')) {
-                            promptValue = fileContent;
-                        } else {
-                            promptValue = await replaceOtherVariables(fileContent, model, role, context);
-                        }
-                    }
-                    matchedContents.push(promptValue);
-                }
-            }
-
-            const sarAllText = matchedContents.join('\n');
-            processedText = processedText.replace(/\{\{SarPromptAll\}\}/g, sarAllText);
         }
     }
 
@@ -890,7 +636,7 @@ async function replacePriorityVariables(text, context, role) {
         processedText = processedText.replaceAll(placeholder, emojiList || `[${emojiName}列表不可用]`);
     }
 
-    // --- 日记本处理 (迁移到 RAGDiaryPlugin) ---
+    // --- 日记本占位符由 DailyNote / DailyNoteManager 等插件处理 ---
     // (逻辑已移除)
 
     return processedText;

@@ -193,12 +193,29 @@ impl LoudnessDatabase {
             
             CREATE INDEX IF NOT EXISTS idx_file_path ON track_loudness(file_path);
             CREATE INDEX IF NOT EXISTS idx_scan_version ON track_loudness(scan_version);
-            
-            -- Add columns to existing databases (migration)
-            -- These will silently fail if columns already exist, which is fine
-            ALTER TABLE track_loudness ADD COLUMN file_mtime INTEGER;
-            ALTER TABLE track_loudness ADD COLUMN file_size INTEGER;
         "#).map_err(|e| format!("Failed to initialize schema: {}", e))?;
+
+        // SQLite has no `ADD COLUMN IF NOT EXISTS`. Running unconditional ALTER
+        // statements makes every startup fail once the first migration succeeded.
+        for (column, sql_type) in [("file_mtime", "INTEGER"), ("file_size", "INTEGER")] {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT EXISTS(
+                        SELECT 1 FROM pragma_table_info('track_loudness') WHERE name = ?1
+                    )",
+                    [column],
+                    |row| row.get(0),
+                )
+                .map_err(|e| format!("Failed to inspect loudness schema: {}", e))?;
+
+            if !exists {
+                conn.execute(
+                    &format!("ALTER TABLE track_loudness ADD COLUMN {column} {sql_type}"),
+                    [],
+                )
+                .map_err(|e| format!("Failed to migrate loudness schema: {}", e))?;
+            }
+        }
         
         Ok(())
     }

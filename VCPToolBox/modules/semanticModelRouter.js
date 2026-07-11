@@ -6,6 +6,7 @@ const {
   extractTextFromMessageContent,
   findLastRealUserMessage
 } = require('./messageProcessor.js');
+const { getEmbeddingsBatch } = require('../EmbeddingUtils.js');
 
 const DEFAULT_CONFIG = {
   enabled: true,
@@ -67,15 +68,11 @@ function cosineSimilarity(vectorA, vectorB) {
     : dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-function findLastMessageText(messages, role, ragPlugin = null) {
+function findLastMessageText(messages, role) {
   if (!Array.isArray(messages)) return '';
 
   if (role === 'user') {
-    const lastUserMessage = findLastRealUserMessage(messages, {
-      sanitize: ragPlugin && typeof ragPlugin.sanitizeForEmbedding === 'function'
-        ? ragPlugin.sanitizeForEmbedding.bind(ragPlugin)
-        : null
-    });
+    const lastUserMessage = findLastRealUserMessage(messages);
     return lastUserMessage.sanitizedContent || '';
   }
 
@@ -308,15 +305,15 @@ class SemanticModelRouter {
     return !!this.resolvePresetName(requestedModel);
   }
 
-  getRagPlugin(pluginManager) {
-    const ragPlugin = pluginManager?.messagePreprocessors?.get('RAGDiaryPlugin');
-    if (!ragPlugin || typeof ragPlugin.getSingleEmbeddingCached !== 'function') {
-      return null;
-    }
-    return ragPlugin;
+  async embedTexts(texts) {
+    const values = await getEmbeddingsBatch(texts, {
+      apiUrl: process.env.API_URL,
+      apiKey: process.env.API_Key
+    });
+    return values;
   }
 
-  async getDescriptionVector(ragPlugin, description) {
+  async getDescriptionVector(description) {
     const key = String(description || '').trim();
     if (!key) return null;
 
@@ -324,47 +321,37 @@ class SemanticModelRouter {
       return this.descriptionVectorCache.get(key);
     }
 
-    let vector = null;
-    // 复用 KnowledgeBaseManager 的持久化描述向量缓存：
-    // getPluginDescriptionVector() 会以 plugin_desc_hash:<sha256(description)> 写入 SQLite kv_store，
-    // 与工具动态折叠描述向量共享同一套持久化缓存，避免重启后重复向量化模型路由描述字段。
-    if (ragPlugin.vectorDBManager && typeof ragPlugin.vectorDBManager.getPluginDescriptionVector === 'function') {
-      vector = await ragPlugin.vectorDBManager.getPluginDescriptionVector(
-        key,
-        ragPlugin.getSingleEmbeddingCached.bind(ragPlugin)
-      );
-    } else {
-      vector = await ragPlugin.getSingleEmbeddingCached(key);
-    }
+    const [vector] = await this.embedTexts([key]);
 
     this.descriptionVectorCache.set(key, vector);
     return vector;
   }
 
-  async buildContextVector(messages, ragPlugin, preset) {
-    let userContent = findLastMessageText(messages, 'user', ragPlugin);
+  async buildContextVector(messages, preset) {
+    const userContent = findLastMessageText(messages, 'user');
     let aiContent = findLastMessageText(messages, 'assistant');
 
     if (!userContent && !aiContent) return null;
 
-    if (typeof ragPlugin.sanitizeForEmbedding === 'function') {
-      aiContent = aiContent ? ragPlugin.sanitizeForEmbedding(aiContent, 'assistant') : '';
-    }
-
-    const [userVector, aiVector] = await Promise.all([
-      userContent ? ragPlugin.getSingleEmbeddingCached(userContent) : Promise.resolve(null),
-      aiContent ? ragPlugin.getSingleEmbeddingCached(aiContent) : Promise.resolve(null)
-    ]);
+    const [userVector, aiVector] = await this.embedTexts([userContent || '', aiContent || '']);
 
     const weights = Array.isArray(preset.contextWeights) && preset.contextWeights.length > 0
       ? preset.contextWeights
       : this.config.contextWeights;
 
-    if (typeof ragPlugin._getWeightedAverageVector === 'function') {
-      return ragPlugin._getWeightedAverageVector([userVector, aiVector], weights);
+    const vectors = [userVector, aiVector];
+    const valid = vectors
+      .map((vector, index) => ({ vector, weight: Number(weights[index]) || 0 }))
+      .filter(item => item.vector && item.vector.length > 0);
+    if (valid.length === 0) return null;
+    const dimensions = valid[0].vector.length;
+    const result = new Array(dimensions).fill(0);
+    const totalWeight = valid.reduce((sum, item) => sum + item.weight, 0) || valid.length;
+    for (const item of valid) {
+      const weight = item.weight || 1;
+      for (let i = 0; i < dimensions; i++) result[i] += item.vector[i] * weight;
     }
-
-    return userVector || aiVector || null;
+    return result.map(value => value / totalWeight);
   }
 
   buildFallbackPlan(preset, rankedRoutes = []) {
@@ -434,17 +421,7 @@ class SemanticModelRouter {
     }
 
     try {
-      const ragPlugin = this.getRagPlugin(pluginManager);
-      if (!ragPlugin) {
-        return this.buildDefaultPlan({
-          requestedModel,
-          presetName,
-          preset,
-          reason: 'rag_plugin_unavailable'
-        });
-      }
-
-      const contextVector = await this.buildContextVector(messages, ragPlugin, preset);
+      const contextVector = await this.buildContextVector(messages, preset);
       if (!contextVector) {
         return this.buildDefaultPlan({
           requestedModel,
@@ -456,7 +433,7 @@ class SemanticModelRouter {
 
       const scoredRoutes = [];
       for (const route of preset.routes || []) {
-        const descriptionVector = await this.getDescriptionVector(ragPlugin, route.description);
+        const descriptionVector = await this.getDescriptionVector(route.description);
         const similarity = cosineSimilarity(contextVector, descriptionVector);
         scoredRoutes.push({
           name: route.name,

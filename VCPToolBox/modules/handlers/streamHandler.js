@@ -23,7 +23,6 @@ class StreamHandler {
       maxVCPLoopStream,
       apiRetries,
       apiRetryDelay,
-      RAGMemoRefresh,
       enableRoleDivider,
       enableRoleDividerInLoop,
       roleDividerIgnoreList,
@@ -35,10 +34,8 @@ class StreamHandler {
       abortController,
       originalBody,
       clientIp,
-      _refreshRagBlocksIfNeeded,
       fetchWithRetry,
       vcpToolUseForbidden,
-      apiConnectionTimeoutMs,
       semanticModelFallbackCandidates,
       oneRingResponseMeta,
       shouldProcessMedia,
@@ -370,7 +367,7 @@ class StreamHandler {
           const isError = !result.success || (result.raw && this.context.isToolResultError(result.raw));
 
           if (isError) {
-            archeryStatusSummaryItems.push(`${toolCall.name} 调用失败${result.recordId ? ` (记录ID: ${result.recordId})` : ''}`);
+            archeryStatusSummaryItems.push(`${toolCall.name} 调用失败`);
             archeryErrorContents.push({
               type: 'text',
               text: `[异步工具 "${toolCall.name}" 返回了错误，请注意]:\n${result.content[0].text}`
@@ -438,7 +435,7 @@ class StreamHandler {
             body: JSON.stringify({ ...originalBody, messages: currentMessagesForLoop, stream: true }),
             signal: abortController.signal,
           },
-          { retries: apiRetries, delay: apiRetryDelay, debugMode: DEBUG_MODE, connectionTimeout: apiConnectionTimeoutMs, modelFallbackCandidates: semanticModelFallbackCandidates }
+          { retries: apiRetries, delay: apiRetryDelay, debugMode: DEBUG_MODE, modelFallbackCandidates: semanticModelFallbackCandidates }
         );
 
         if (nextAiAPIResponse.ok) {
@@ -513,7 +510,7 @@ class StreamHandler {
         );
         const isTimeout = isError && !isRejected && /超时|timeout|timed\s*out|DIRECT_TOOL_TIMEOUT|TIMEOUT/i.test(errorText);
         const statusText = isRejected ? '调用拒绝' : (isTimeout ? '调用超时' : (isError ? '调用失败' : '调用成功'));
-        toolStatusSummaryItems.push(`${toolCall.name} ${statusText}${result?.recordId ? ` (记录ID: ${result.recordId})` : ''}`);
+        toolStatusSummaryItems.push(`${toolCall.name} ${statusText}`);
 
         if ((shouldShowVCP || forceThisOne) && !res.writableEnded && !res.destroyed) {
           if (!hasStartedUserBlock && enableRoleDivider) {
@@ -561,17 +558,9 @@ class StreamHandler {
          } catch(e) {}
       }
 
-      // RAG 刷新
-      const toolResultsTextForRAG = JSON.stringify(combinedToolResultsForAI, (k, v) =>
+      const toolResultsText = JSON.stringify(combinedToolResultsForAI, (k, v) =>
         (k === 'url' || k === 'image_url') && typeof v === 'string' && v.startsWith('data:') ? "[Omitted]" : v
       );
-
-      if (RAGMemoRefresh) {
-        currentMessagesForLoop = await _refreshRagBlocksIfNeeded(currentMessagesForLoop, {
-          lastAiMessage: currentAIContentForLoop,
-          toolResultsText: toolResultsTextForRAG
-        }, pluginManager, DEBUG_MODE);
-      }
 
       const hasImage = combinedToolResultsForAI.some(item => item.type === 'image_url');
       const translatedToolResultsForAI = hasImage
@@ -582,7 +571,7 @@ class StreamHandler {
         : null;
       const finalToolPayloadForAI = hasImage
         ? translatedToolResultsForAI
-        : `<!-- VCP_TOOL_PAYLOAD -->\n${toolResultsTextForRAG}`;
+        : `<!-- VCP_TOOL_PAYLOAD -->\n${toolResultsText}`;
 
       currentMessagesForLoop.push({ role: 'user', content: finalToolPayloadForAI });
 
@@ -608,7 +597,7 @@ class StreamHandler {
           body: JSON.stringify({ ...originalBody, messages: currentMessagesForLoop, stream: true }),
           signal: abortController.signal,
         },
-        { retries: apiRetries, delay: apiRetryDelay, debugMode: DEBUG_MODE, connectionTimeout: apiConnectionTimeoutMs, modelFallbackCandidates: semanticModelFallbackCandidates }
+        { retries: apiRetries, delay: apiRetryDelay, debugMode: DEBUG_MODE, modelFallbackCandidates: semanticModelFallbackCandidates }
       );
 
       if (!nextAiAPIResponse.ok) break;

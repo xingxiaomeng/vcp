@@ -12,7 +12,6 @@ const { getAuthCode } = require('./modules/captchaDecoder'); // 导入统一的�
 const ToolApprovalManager = require('./modules/toolApprovalManager');
 const { hasFoldMarkers, buildDynamicFoldObject } = require('./modules/foldProtocol');
 const { sanitizeToolResult } = require('./modules/toolResultPrivacyGuard');
-const toolCallRecordStore = require('./modules/toolCallRecordStore');
 
 const PLUGIN_DIR = path.join(__dirname, 'Plugin');
 const manifestFileName = 'plugin-manifest.json';
@@ -40,8 +39,6 @@ class PluginManager extends EventEmitter {
         this.webSocketServer = null; // 为 WebSocketServer 实例占位
         this.isReloading = false;
         this.reloadTimeout = null;
-        this.vectorDBManager = null; // 修复：不再自己创建，等待注入
-        this.tdbKnowledgeManager = null; // 冷知识库管理器，等待 server.js 注入
         this.toolApprovalManager = new ToolApprovalManager(path.join(__dirname, 'toolApprovalConfig.json'));
         this.pendingApprovals = new Map(); // requestId -> { resolve, reject, timeoutId }
     }
@@ -61,16 +58,6 @@ class PluginManager extends EventEmitter {
     setWebSocketServer(wss) {
         this.webSocketServer = wss;
         if (this.debugMode) console.log('[PluginManager] WebSocketServer instance has been set.');
-    }
-
-    setVectorDBManager(vdbManager) {
-        this.vectorDBManager = vdbManager;
-        if (this.debugMode) console.log('[PluginManager] VectorDBManager instance has been set.');
-    }
-
-    setTdbKnowledgeManager(tdbManager) {
-        this.tdbKnowledgeManager = tdbManager;
-        if (this.debugMode) console.log('[PluginManager] TDBKnowledgeManager instance has been set.');
     }
 
     async _getDecryptedAuthCode() {
@@ -502,16 +489,6 @@ class PluginManager extends EventEmitter {
     async shutdownAllPlugins() {
         console.log('[PluginManager] Shutting down all plugins...'); // Keep
 
-        // --- Shutdown VectorDBManager first to stop background processing ---
-        if (this.vectorDBManager && typeof this.vectorDBManager.shutdown === 'function') {
-            try {
-                if (this.debugMode) console.log('[PluginManager] Calling shutdown for VectorDBManager...');
-                await this.vectorDBManager.shutdown();
-            } catch (error) {
-                console.error('[PluginManager] Error during shutdown of VectorDBManager:', error);
-            }
-        }
-
         for (const [name, pluginModuleData] of this.messagePreprocessors) {
             const pluginModule = pluginModuleData.module || pluginModuleData;
             if (pluginModule && typeof pluginModule.shutdown === 'function') {
@@ -659,12 +636,7 @@ class PluginManager extends EventEmitter {
             this.preprocessorOrder = finalOrder;
             if (finalOrder.length > 0) console.log('[PluginManager] Final message preprocessor order: ' + finalOrder.join(' -> '));
 
-            // 5. VectorDBManager 应该已经由 server.js 初始化，这里不再重复初始化
-            if (!this.vectorDBManager) {
-                console.warn('[PluginManager] VectorDBManager not set! Plugins requiring it may fail.');
-            }
-
-            // 6. 按顺序初始化所有模块
+            // 5. 按顺序初始化所有模块
             const allModulesMap = new Map(modulesToInitialize.map(m => [m.manifest.name, m]));
             const initializationOrder = [...this.preprocessorOrder];
             allModulesMap.forEach((_, name) => {
@@ -688,55 +660,6 @@ class PluginManager extends EventEmitter {
                         vcpLogFunctions: this.getVCPLogFunctions(),
                         pluginManager: this
                     };
-
-                    // --- 注入 VectorDBManager ---
-                    if (manifest.name === 'RAGDiaryPlugin') {
-                        dependencies.vectorDBManager = this.vectorDBManager;
-                        // 🧊 注入冷知识库管理器，供 [[xx知识库]] / 《《xx知识库》》 占位符使用
-                        if (this.tdbKnowledgeManager) {
-                            dependencies.tdbKnowledgeManager = this.tdbKnowledgeManager;
-                            if (this.debugMode) console.log(`[PluginManager] 🧊 Injected TDBKnowledgeManager into RAGDiaryPlugin.`);
-                        }
-                    }
-
-                    // --- 🌟 ContextBridge 通用依赖注入 ---
-                    // 任何在 manifest 中声明 "requiresContextBridge": true 的插件都能获得 RAG 上下文向量接口
-                    if (manifest.requiresContextBridge) {
-                        const ragPluginModule = this.messagePreprocessors.get('RAGDiaryPlugin');
-                        if (ragPluginModule && typeof ragPluginModule.getContextBridge === 'function') {
-                            dependencies.contextBridge = ragPluginModule.getContextBridge();
-                            if (this.debugMode) console.log(`[PluginManager] 🌟 Injected ContextBridge into ${manifest.name}.`);
-                        } else {
-                            console.warn(`[PluginManager] Plugin "${manifest.name}" requires ContextBridge, but RAGDiaryPlugin is not available.`);
-                        }
-                    }
-
-                    // --- LightMemo 特殊依赖注入（向后兼容 + ContextBridge） ---
-                    if (manifest.name === 'LightMemo') {
-                        const ragPluginModule = this.messagePreprocessors.get('RAGDiaryPlugin');
-                        if (ragPluginModule && ragPluginModule.vectorDBManager && typeof ragPluginModule.getSingleEmbedding === 'function') {
-                            dependencies.vectorDBManager = ragPluginModule.vectorDBManager;
-                            dependencies.getSingleEmbedding = ragPluginModule.getSingleEmbedding.bind(ragPluginModule);
-                            if (typeof ragPluginModule.getBatchEmbeddingsCached === 'function') {
-                                dependencies.getBatchEmbeddings = ragPluginModule.getBatchEmbeddingsCached.bind(ragPluginModule);
-                            } else if (typeof ragPluginModule.getBatchEmbeddings === 'function') {
-                                dependencies.getBatchEmbeddings = ragPluginModule.getBatchEmbeddings.bind(ragPluginModule);
-                            }
-                            // 同时注入 ContextBridge（如果 LightMemo 未在 manifest 中声明，也主动注入）
-                            if (!dependencies.contextBridge && typeof ragPluginModule.getContextBridge === 'function') {
-                                dependencies.contextBridge = ragPluginModule.getContextBridge();
-                            }
-                            if (this.debugMode) console.log(`[PluginManager] Injected VectorDBManager, getSingleEmbedding, getBatchEmbeddings and ContextBridge into LightMemo.`);
-                        } else {
-                            console.error(`[PluginManager] Critical dependency failure: RAGDiaryPlugin or its components not available for LightMemo injection.`);
-                        }
-                        // 注入冷知识库管理器（TDBKnowledge），供 LightMemo 检索企业级知识库
-                        if (this.tdbKnowledgeManager) {
-                            dependencies.tdbKnowledgeManager = this.tdbKnowledgeManager;
-                            if (this.debugMode) console.log(`[PluginManager] Injected TDBKnowledgeManager into LightMemo.`);
-                        }
-                    }
-                    // --- 注入结束 ---
 
                     await module.initialize(initialConfig, dependencies);
                 } catch (e) {
@@ -881,20 +804,9 @@ class PluginManager extends EventEmitter {
     }
 
     async processToolCall(toolName, toolArgs, requestIp = null, sourceNode = null, executionOptions = {}) {
-        const shouldManageToolCallRecord = !executionOptions?.toolCallRecordHandle;
-        const managedToolCallRecord = shouldManageToolCallRecord
-            ? toolCallRecordStore.beginRecord({ toolName, args: toolArgs || {}, requestIp, sourceNode })
-            : null;
-
         const plugin = this.plugins.get(toolName);
         if (!plugin) {
-            const notFoundError = new Error(`[PluginManager] Plugin "${toolName}" not found for tool call.`);
-            toolCallRecordStore.finishRecord(managedToolCallRecord, {
-                success: false,
-                result: { plugin_execution_error: notFoundError.message },
-                error: notFoundError
-            });
-            throw notFoundError;
+            throw new Error(`[PluginManager] Plugin "${toolName}" not found for tool call.`);
         }
 
         // Helper function to generate a timestamp string
@@ -1029,19 +941,6 @@ class PluginManager extends EventEmitter {
                     if (this.debugMode) {
                         console.log(`[PluginManager] Tool call for "${toolName}" (ID: ${requestId}) was rejected silently. Returning empty result to AI.`);
                     }
-                    const silentRejectionRecord = {
-                        status: 'rejected',
-                        success: false,
-                        silentRejected: true,
-                        error_type: 'approval_rejected',
-                        rejected_by_user: true,
-                        message: `Tool call "${toolName}" was rejected silently by manual approval.`
-                    };
-                    toolCallRecordStore.finishRecord(managedToolCallRecord, {
-                        success: false,
-                        result: silentRejectionRecord,
-                        error: silentRejectionRecord.message
-                    });
                     return undefined;
                 }
                 if (this.debugMode) console.log(`[PluginManager] Tool call for "${toolName}" (ID: ${requestId}) approved.`);
@@ -1121,13 +1020,6 @@ class PluginManager extends EventEmitter {
                 const pluginOutput = await this.executePlugin(toolName, executionParam, requestIp, executionOptions); // Returns {status, result/error}
 
                 if (pluginOutput.__vcpArcheryNoReplySilent) {
-                    toolCallRecordStore.finishRecord(managedToolCallRecord, {
-                        success: true,
-                        result: pluginOutput.result
-                    });
-                    if (managedToolCallRecord?.id && pluginOutput.result && typeof pluginOutput.result === 'object' && !pluginOutput.result.tool_call_record_id) {
-                        pluginOutput.result.tool_call_record_id = managedToolCallRecord.id;
-                    }
                     return pluginOutput.result;
                 }
 
@@ -1157,20 +1049,6 @@ class PluginManager extends EventEmitter {
             }
 
             // --- 通用结果处理 ---
-            // 兼容 direct/hybrid 插件主动返回 stdio 风格的 { status, result } 包装。
-            // stdio 插件会在上方被解包到 pluginOutput.result；direct 插件没有这一步，
-            // 因此这里补齐一次，使 direct 插件也能返回与 VSearch 相同的
-            // { status: "success", result: { content: [...] } } 形态。
-            if (
-                resultFromPlugin &&
-                typeof resultFromPlugin === 'object' &&
-                resultFromPlugin.status === 'success' &&
-                resultFromPlugin.result &&
-                typeof resultFromPlugin.result === 'object'
-            ) {
-                resultFromPlugin = resultFromPlugin.result;
-            }
-
             let finalResultObject = (typeof resultFromPlugin === 'object' && resultFromPlugin !== null) ? resultFromPlugin : { original_plugin_output: resultFromPlugin };
 
             if (maidNameFromArgs) {
@@ -1179,15 +1057,7 @@ class PluginManager extends EventEmitter {
             finalResultObject.timestamp = _getFormattedLocalTimestamp();
             _filterFuzzyDiff(finalResultObject, _getFormattedLocalTimestamp());
 
-            const sanitizedResult = this._sanitizeToolResultForAi(finalResultObject);
-            toolCallRecordStore.finishRecord(managedToolCallRecord, {
-                success: true,
-                result: sanitizedResult
-            });
-            if (managedToolCallRecord?.id && sanitizedResult && typeof sanitizedResult === 'object' && !sanitizedResult.tool_call_record_id) {
-                sanitizedResult.tool_call_record_id = managedToolCallRecord.id;
-            }
-            return sanitizedResult;
+            return this._sanitizeToolResultForAi(finalResultObject);
 
         } catch (e) {
             console.error(`[PluginManager processToolCall] Error during execution for plugin ${toolName}:`, e.message);
@@ -1205,16 +1075,7 @@ class PluginManager extends EventEmitter {
                 errorObject.timestamp = _getFormattedLocalTimestamp();
             }
             _filterFuzzyDiff(errorObject, _getFormattedLocalTimestamp());
-            const sanitizedErrorObject = this._sanitizeToolResultForAi(errorObject);
-            toolCallRecordStore.finishRecord(managedToolCallRecord, {
-                success: false,
-                result: sanitizedErrorObject,
-                error: e
-            });
-            if (managedToolCallRecord?.id && sanitizedErrorObject && typeof sanitizedErrorObject === 'object' && !sanitizedErrorObject.tool_call_record_id) {
-                sanitizedErrorObject.tool_call_record_id = managedToolCallRecord.id;
-            }
-            throw new Error(JSON.stringify(sanitizedErrorObject));
+            throw new Error(JSON.stringify(this._sanitizeToolResultForAi(errorObject)));
         }
     }
 

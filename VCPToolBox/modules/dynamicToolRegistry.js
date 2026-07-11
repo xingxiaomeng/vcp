@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const dotenv = require('dotenv');
 const { buildDynamicFoldObject, hasFoldMarkers } = require('./foldProtocol');
+const { getEmbeddingsBatch } = require('../EmbeddingUtils');
 
 const PRIVATE_CONFIG_RELATIVE_PATH = path.join('Plugin', 'DynamicToolBridge', 'config.env');
 const LIGHT_LIST_TOKEN_BUDGET = 15;
@@ -21,7 +22,7 @@ const DEFAULT_CONFIG = Object.freeze({
     maxInjectionChars: 16000,
     classificationDebounceMs: 1000,
     classifierTimeoutMs: 30000,
-    useRagEmbeddings: true,
+    useEmbeddings: true,
     manualOverrides: {
         excludedOriginKeys: [],
         pinnedOriginKeys: [],
@@ -156,6 +157,11 @@ function mergeConfig(base, fileConfig, overrideConfig) {
     merged.classificationDebounceMs = clampInteger(merged.classificationDebounceMs, 0, 60000, DEFAULT_CONFIG.classificationDebounceMs);
     merged.classifierTimeoutMs = clampInteger(merged.classifierTimeoutMs, 100, 120000, DEFAULT_CONFIG.classifierTimeoutMs);
     merged.enabled = merged.enabled !== false;
+    if (Object.prototype.hasOwnProperty.call(merged, 'useRagEmbeddings') && !Object.prototype.hasOwnProperty.call(overrideConfig || {}, 'useEmbeddings')) {
+        merged.useEmbeddings = merged.useRagEmbeddings !== false;
+    }
+    merged.useEmbeddings = merged.useEmbeddings !== false;
+    delete merged.useRagEmbeddings;
     return merged;
 }
 
@@ -887,76 +893,10 @@ class DynamicToolRegistry {
     async _resolveFoldBlocksForInjection(foldObj, options = {}, record = {}) {
         const blocks = asArray(foldObj?.fold_blocks).filter((block) => block && typeof block.content === 'string');
         if (blocks.length === 0) return record.fullDescription || record.description || 'No full description available.';
-
         const fallbackBlock = [...blocks]
             .sort((a, b) => Number(a.threshold || 0) - Number(b.threshold || 0))
             .find((block) => block.content) || blocks[0];
-        const ragPlugin = options.pluginManager?.messagePreprocessors?.get
-            ? options.pluginManager.messagePreprocessors.get('RAGDiaryPlugin')
-            : null;
-        if (!ragPlugin || typeof ragPlugin.getSingleEmbeddingCached !== 'function') {
-            return fallbackBlock.content;
-        }
-
-        const queryText = extractMessageText(options.messages || []);
-        if (!queryText.trim()) return fallbackBlock.content;
-
-        try {
-            const userVector = await withTimeout(
-                Promise.resolve(ragPlugin.getSingleEmbeddingCached(queryText)),
-                this.config.classifierTimeoutMs,
-                'dynamic tool fold query embedding'
-            );
-            const vectorDBManager = options.pluginManager?.vectorDBManager || ragPlugin.vectorDBManager;
-            const getBlockVector = async (text) => {
-                if (vectorDBManager && typeof vectorDBManager.getPluginDescriptionVector === 'function') {
-                    return vectorDBManager.getPluginDescriptionVector(
-                        `dynamic_tool_fold:${String(text || '').trim()}`,
-                        ragPlugin.getSingleEmbeddingCached.bind(ragPlugin)
-                    );
-                }
-                return ragPlugin.getSingleEmbeddingCached(text);
-            };
-            let pluginSimilarity = null;
-            const getPluginSimilarity = async () => {
-                if (pluginSimilarity !== null) return pluginSimilarity;
-                const descText = foldObj.plugin_description || record.description || record.displayName || record.pluginName;
-                const descVector = await withTimeout(
-                    Promise.resolve(getBlockVector(descText)),
-                    this.config.classifierTimeoutMs,
-                    'dynamic tool fold plugin embedding'
-                );
-                pluginSimilarity = this._cosineSimilarity(userVector, descVector);
-                return pluginSimilarity;
-            };
-
-            const included = [];
-            for (const block of blocks) {
-                const threshold = Number.isFinite(Number(block.threshold)) ? Number(block.threshold) : 0;
-                if (threshold <= 0) {
-                    included.push(block.content);
-                    continue;
-                }
-                if (!String(block.description || '').trim()) {
-                    if (await getPluginSimilarity() >= threshold) included.push(block.content);
-                    continue;
-                }
-                const targetText = block.description || block.content;
-                const blockVector = await withTimeout(
-                    Promise.resolve(getBlockVector(targetText)),
-                    this.config.classifierTimeoutMs,
-                    'dynamic tool fold block embedding'
-                );
-                if (this._cosineSimilarity(userVector, blockVector) >= threshold) {
-                    included.push(block.content);
-                }
-            }
-            return included.length > 0 ? included.join('\n\n') : fallbackBlock.content;
-        } catch (error) {
-            this.lastError = error.message;
-            if (this.debugMode) console.warn('[DynamicToolRegistry] fold block expansion failed:', error.message);
-            return fallbackBlock.content;
-        }
+        return fallbackBlock.content;
     }
 
     _isAvailable(record) {
@@ -1104,7 +1044,7 @@ class DynamicToolRegistry {
     }
 
     async _classifyWithEmbeddings(record) {
-        if (!this.config.useRagEmbeddings) return null;
+        if (!this.config.useEmbeddings) return null;
         const getEmbedding = this._resolveEmbeddingProvider();
         if (!getEmbedding) return null;
 
@@ -1113,7 +1053,7 @@ class DynamicToolRegistry {
             const pluginVector = await withTimeout(
                 Promise.resolve(getEmbedding(text)),
                 this.config.classifierTimeoutMs,
-                'RAG embedding plugin classification'
+                'embedding plugin classification'
             );
             if (!Array.isArray(pluginVector) || pluginVector.length === 0) return null;
 
@@ -1136,12 +1076,12 @@ class DynamicToolRegistry {
                 brief: this._compactBrief(record, categories, record.brief || record.description || `${record.pluginName} provides a VCP tool.`),
                 categories,
                 keywords: Array.from(new Set(keywords)),
-                classifiedBy: 'rag_embedding_fallback',
+                classifiedBy: 'embedding_fallback',
                 confidence: Math.max(0.45, Math.min(0.95, selected[0].score))
             };
         } catch (error) {
             this.lastError = error.message;
-            if (this.debugMode) console.warn('[DynamicToolRegistry] RAG embedding classification failed:', error.message);
+            if (this.debugMode) console.warn('[DynamicToolRegistry] Embedding classification failed:', error.message);
             return null;
         }
     }
@@ -1154,7 +1094,7 @@ class DynamicToolRegistry {
         const vector = await withTimeout(
             Promise.resolve(getEmbedding(text)),
             this.config.classifierTimeoutMs,
-            'RAG embedding category classification'
+            'embedding category classification'
         );
         if (Array.isArray(vector) && vector.length > 0) {
             this.categoryEmbeddingCache.set(rule.category, vector);
@@ -1164,34 +1104,14 @@ class DynamicToolRegistry {
     }
 
     _resolveEmbeddingProvider() {
-        const ragPlugin = this.pluginManager?.messagePreprocessors?.get
-            ? this.pluginManager.messagePreprocessors.get('RAGDiaryPlugin')
-            : null;
-        if (!ragPlugin) return null;
-
-        let rawEmbeddingFn = null;
-        if (typeof ragPlugin.getSingleEmbeddingCached === 'function') {
-            rawEmbeddingFn = ragPlugin.getSingleEmbeddingCached.bind(ragPlugin);
-        } else if (typeof ragPlugin.getSingleEmbedding === 'function') {
-            rawEmbeddingFn = ragPlugin.getSingleEmbedding.bind(ragPlugin);
-        } else if (typeof ragPlugin.getContextBridge === 'function') {
-            const bridge = ragPlugin.getContextBridge();
-            if (bridge && typeof bridge.embedText === 'function') {
-                rawEmbeddingFn = bridge.embedText.bind(bridge);
-            }
-        }
-
-        if (!rawEmbeddingFn) return null;
-
-        const vectorDBManager = this.pluginManager?.vectorDBManager || ragPlugin.vectorDBManager;
-        if (vectorDBManager && typeof vectorDBManager.getPluginDescriptionVector === 'function') {
-            return async (text) => vectorDBManager.getPluginDescriptionVector(
-                `dynamic_tool_registry:${String(text || '').trim()}`,
-                rawEmbeddingFn
-            );
-        }
-
-        return rawEmbeddingFn;
+        if (!process.env.API_URL || !process.env.API_Key) return null;
+        return async (text) => {
+            const [vector] = await getEmbeddingsBatch([String(text || '').trim()], {
+                apiUrl: process.env.API_URL,
+                apiKey: process.env.API_Key
+            });
+            return vector;
+        };
     }
 
     _cosineSimilarity(a, b) {

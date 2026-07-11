@@ -15,7 +15,7 @@ export interface DiaryNote {
   preview?: string
 }
 
-export type DiaryResourceMode = 'diary' | 'knowledge'
+export type DiaryResourceMode = 'diary'
 
 const RESOURCE_CONFIG = {
   diary: {
@@ -23,15 +23,7 @@ const RESOURCE_CONFIG = {
     folderLabel: '日记本',
     itemLabel: '日记',
     basePath: '/admin_api/dailynotes',
-    enableRagTags: true,
-    enableDiscovery: true,
-  },
-  knowledge: {
-    label: '知识库',
-    folderLabel: '知识库',
-    itemLabel: '文件',
-    basePath: '/admin_api/knowledge',
-    enableRagTags: true,
+    enableRagTags: false,
     enableDiscovery: false,
   },
 } as const
@@ -142,7 +134,7 @@ export const useDiaryStore = defineStore('diary', () => {
     if (!selectedFolder.value || !resourceConfig.value.enableRagTags) return
 
     try {
-      const endpoint = resourceMode.value === 'knowledge' ? '/admin_api/tdb-tags' : '/admin_api/rag-tags'
+      const endpoint = '/admin_api/rag-tags'
       ragTagsConfig.value = await diaryApi.getRagTagsConfig(selectedFolder.value, undefined, endpoint)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
@@ -203,7 +195,7 @@ export const useDiaryStore = defineStore('diary', () => {
         config.description = ragTagsConfig.value.description.trim()
       }
 
-      const endpoint = resourceMode.value === 'knowledge' ? '/admin_api/tdb-tags' : '/admin_api/rag-tags'
+      const endpoint = '/admin_api/rag-tags'
       await diaryApi.saveRagTagsConfig(selectedFolder.value, {
         thresholdEnabled: ragTagsConfig.value.thresholdEnabled,
         threshold: ragTagsConfig.value.threshold,

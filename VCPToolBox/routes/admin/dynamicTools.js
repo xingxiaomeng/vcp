@@ -17,6 +17,7 @@ module.exports = function(options) {
             'maxInjectionChars',
             'classificationDebounceMs',
             'classifierTimeoutMs',
+            'useEmbeddings',
             'useRagEmbeddings'
         ];
         for (const key of scalarKeys) {

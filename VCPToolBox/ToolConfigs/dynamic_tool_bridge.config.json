@@ -8,7 +8,7 @@
   "maxInjectionChars": 16000,
   "classificationDebounceMs": 1000,
   "classifierTimeoutMs": 30000,
-  "useRagEmbeddings": true,
+  "useEmbeddings": true,
   "manualOverrides": {
     "excludedOriginKeys": [],
     "pinnedOriginKeys": [],

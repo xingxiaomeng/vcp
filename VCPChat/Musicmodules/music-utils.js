@@ -18,11 +18,28 @@ function setupUtils(app) {
 
     app.normalizePathForCompare = (inputPath) => {
         if (!inputPath) return null;
-        let normalized = inputPath.replace(/\\/g, '/');
-        if (normalized.startsWith('//?/')) {
-            normalized = normalized.substring(4);
+        let normalized = String(inputPath).trim();
+        // Windows extended-length path prefixes from canonicalize(): \\?\C:\... or //?/C:/...
+        normalized = normalized.replace(/^\\\\\\?\\/i, '');
+        normalized = normalized.replace(/^\/\/\?\//i, '');
+        normalized = normalized.replace(/\\/g, '/');
+        if (/^[a-zA-Z]:\//.test(normalized)) {
+            normalized = normalized[0].toUpperCase() + normalized.slice(1);
         }
-        return normalized;
+        normalized = normalized.replace(/\/+$/, '');
+        return normalized.toLowerCase();
+    };
+
+    app.pathsEqual = (pathA, pathB) => {
+        const a = app.normalizePathForCompare(pathA);
+        const b = app.normalizePathForCompare(pathB);
+        return Boolean(a && b && a === b);
+    };
+
+    app.isLocalTrack = (track) => {
+        if (!track?.path) return false;
+        if (track.isRemote) return false;
+        return !/^https?:\/\//i.test(String(track.path));
     };
 
     app.hexToRgb = (hex) => {
@@ -67,8 +84,20 @@ tag_boost:「始」0.95「末」
             const data = await res.json();
             console.log('[Music] Semantic search result:', data);
             
-            // 兼容 LightMemo 旧格式与新版内部 JSON / MCP content 数组格式
-            const output = app.extractLightMemoOutput(data);
+            // 灵活处理返回格式
+            let output = '';
+            if (data.original_plugin_output) {
+                output = data.original_plugin_output;
+            } else if (data.status === 'success' && data.content) {
+                try {
+                    const content = JSON.parse(data.content);
+                    output = content.original_plugin_output || data.content;
+                } catch (e) {
+                    output = data.content;
+                }
+            } else if (typeof data === 'string') {
+                output = data;
+            }
 
             if (output) {
                 app.processSemanticSearchResults(output);
@@ -81,60 +110,6 @@ tag_boost:「始」0.95「末」
             app.isSemanticSearching = false;
             app.semanticSearchBtn.classList.remove('loading');
         }
-    };
-
-    app.extractLightMemoOutput = (payload) => {
-        if (!payload) return '';
-        if (typeof payload === 'string') return payload;
-
-        if (typeof payload.original_plugin_output !== 'undefined') {
-            return app.normalizeLightMemoContent(payload.original_plugin_output);
-        }
-
-        if (payload.result) {
-            const resultOutput = app.extractLightMemoOutput(payload.result);
-            if (resultOutput) return resultOutput;
-        }
-
-        if (typeof payload.content !== 'undefined') {
-            return app.normalizeLightMemoContent(payload.content);
-        }
-
-        if (typeof payload.text === 'string') {
-            return payload.text;
-        }
-
-        return '';
-    };
-
-    app.normalizeLightMemoContent = (content) => {
-        if (content == null) return '';
-        if (typeof content === 'string') {
-            try {
-                const parsedContent = JSON.parse(content);
-                const nestedOutput = app.extractLightMemoOutput(parsedContent);
-                return nestedOutput || content;
-            } catch (e) {
-                return content;
-            }
-        }
-
-        if (Array.isArray(content)) {
-            return content
-                .map(item => {
-                    if (typeof item === 'string') return item;
-                    if (item && typeof item.text === 'string') return item.text;
-                    return app.extractLightMemoOutput(item);
-                })
-                .filter(Boolean)
-                .join('\n');
-        }
-
-        if (typeof content === 'object') {
-            return app.extractLightMemoOutput(content);
-        }
-
-        return String(content);
     };
 
     app.processSemanticSearchResults = (output) => {

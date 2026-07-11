@@ -1,17 +1,24 @@
 # Audio Engine Dual-Build Script (AVX2 & AVX-512)
-# vcpkg path detection - Prefer static-md for stability
-$VcpkgBase = "H:\VCP\vcpkg\installed\x64-windows-static-md"
-if (!(Test-Path $VcpkgBase)) {
+$RootDir = Split-Path -Parent $PSScriptRoot
+$RepoRoot = Split-Path -Parent (Split-Path -Parent $RootDir)
+$VcpkgRoot = if ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } else { Join-Path $RepoRoot "vcpkg" }
+
+$VcpkgBase = Join-Path $VcpkgRoot "installed\x64-windows-static-md"
+if (!(Test-Path (Join-Path $VcpkgBase "lib\soxr.lib"))) {
     Write-Host ">>> Info: static-md not found. Falling back to x64-windows-static." -ForegroundColor Yellow
-    $VcpkgBase = "H:\VCP\vcpkg\installed\x64-windows-static"
+    $VcpkgBase = Join-Path $VcpkgRoot "installed\x64-windows-static"
 }
 
-# Inject environment variables for pkg-config discovery
-$env:PATH = "$VcpkgBase\tools\pkgconf;$env:PATH"
-$env:PKG_CONFIG_PATH = "$VcpkgBase\lib\pkgconfig;$(Join-Path (Get-Location) 'pkgconfig')"
+$PkgconfDir = Join-Path $VcpkgBase "tools\pkgconf"
+$PkgconfShim = Join-Path $PSScriptRoot "pkgconf-shim"
+New-Item -ItemType Directory -Force -Path $PkgconfShim | Out-Null
+Copy-Item (Join-Path $PkgconfDir "pkgconf.exe") (Join-Path $PkgconfShim "pkg-config.exe") -Force
+Copy-Item (Join-Path $PkgconfDir "pkgconf.exe") (Join-Path $PkgconfShim "pkgconf.exe") -Force
 
-# Force vcpkg root and triplet for cargo vcpkg-crate
-$env:VCPKG_ROOT = "H:\VCP\vcpkg"
+$env:PATH = "$PkgconfShim;$PkgconfDir;$env:PATH"
+$env:PKG_CONFIG = Join-Path $PkgconfShim "pkg-config.exe"
+$env:PKG_CONFIG_PATH = "$(Join-Path $VcpkgBase 'lib\pkgconfig');$(Join-Path $RootDir 'pkgconfig')"
+$env:VCPKG_ROOT = $VcpkgRoot
 if ($VcpkgBase -match "static-md") {
     $env:VCPKG_DEFAULT_TRIPLET = "x64-windows-static-md"
 } else {

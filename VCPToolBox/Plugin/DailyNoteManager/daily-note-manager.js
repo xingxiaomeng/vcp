@@ -1,5 +1,5 @@
 // Plugin/DailyNoteManager/daily-note-manager.js
-// hybridservice 混合插件：list（列出日记）+ organize（整理日记）+ associate（联想关联日记）
+// hybridservice 混合插件：list（列出日记）+ organize（整理日记）
 
 const fs = require('fs').promises;
 const path = require('path');
@@ -9,7 +9,6 @@ let pluginConfig = {};
 let debugMode = false;
 let dailyNoteRootPath = '';
 let configuredExtension = 'txt';
-let associativeDiscovery = null;
 
 // --- 写入队列：串行化 organize 操作，防止并发同名文件冲突 ---
 let _writeQueue = Promise.resolve();
@@ -427,154 +426,6 @@ async function _handleOrganizeInternal(args) {
 }
 
 // ============================================================
-// Command: associate
-// 联想发现：基于一篇或多篇日记，通过向量相似度查找关联日记（多URL去重合并）
-// ============================================================
-async function handleAssociateCommand(args) {
-    if (!associativeDiscovery) {
-        return {
-            status: "error",
-            error: "AssociativeDiscovery 模块不可用。请确认知识库系统已初始化。"
-        };
-    }
-
-    const urlRaw = args.url || args.Url || args.URL || args.urls || args.Urls;
-    const range = args.range || args.Range;
-    const k = parseInt(args.k || args.K || '10', 10);
-    const minScore = parseFloat(args.minScore || args.MinScore || args.min_score || '0');
-    const tagBoost = parseFloat(args.tagBoost || args.TagBoost || args.tag_boost || '0.15');
-
-    if (!urlRaw || typeof urlRaw !== 'string' || !urlRaw.trim()) {
-        return { status: "error", error: "缺少必需参数：url（日记文件的相对路径，支持多个URL换行分隔）。" };
-    }
-
-    // 支持多 URL（换行分隔）
-    const urlList = urlRaw.split('\n').map(u => u.trim()).filter(u => u.length > 0);
-    if (urlList.length === 0) {
-        return { status: "error", error: "url 列表为空。" };
-    }
-
-    // 解析 range（逗号或换行分隔的文件夹名列表）
-    let rangeList = [];
-    if (range && typeof range === 'string' && range.trim()) {
-        rangeList = range.split(/[,\n]/).map(s => s.trim()).filter(s => s.length > 0);
-    }
-
-    debugLog(`Processing 'associate' command - urls: [${urlList.join(', ')}], k: ${k}, minScore: ${minScore}, range: [${rangeList.join(', ')}]`);
-
-    try {
-        // 对每个源 URL 并行执行联想搜索
-        const discoverPromises = urlList.map(sourceUrl =>
-            associativeDiscovery.discover({
-                sourceFilePath: sourceUrl,
-                k,
-                range: rangeList,
-                tagBoost
-            })
-        );
-        const allResults = await Promise.all(discoverPromises);
-
-        // 合并去重：同一路径取最高分，合并 matchedTags 和 chunks
-        const mergedMap = new Map();
-        const warnings = [];
-        let totalChunksFound = 0;
-        const allSourceUrls = new Set(urlList.map(u => u.replace(/\\/g, '/')));
-
-        for (const result of allResults) {
-            if (result.warning) warnings.push(result.warning);
-            totalChunksFound += result.metadata.totalChunksFound;
-
-            for (const entry of result.results) {
-                const normalizedPath = entry.path.replace(/\\/g, '/');
-
-                // 排除所有源文件自身
-                if (allSourceUrls.has(normalizedPath)) continue;
-
-                if (!mergedMap.has(normalizedPath)) {
-                    mergedMap.set(normalizedPath, {
-                        path: normalizedPath,
-                        name: entry.name,
-                        score: entry.score,
-                        chunks: [...(entry.chunks || [])],
-                        matchedTags: [...(entry.matchedTags || [])],
-                        tagMatchScore: entry.tagMatchScore || 0
-                    });
-                } else {
-                    const existing = mergedMap.get(normalizedPath);
-                    if (entry.score > existing.score) {
-                        existing.score = entry.score;
-                    }
-                    for (const chunk of (entry.chunks || [])) {
-                        if (existing.chunks.length < 3 && !existing.chunks.includes(chunk)) {
-                            existing.chunks.push(chunk);
-                        }
-                    }
-                    for (const tag of (entry.matchedTags || [])) {
-                        if (!existing.matchedTags.includes(tag)) {
-                            existing.matchedTags.push(tag);
-                        }
-                    }
-                }
-            }
-        }
-
-        // 按分数排序，截取前 k 条
-        let finalResults = Array.from(mergedMap.values())
-            .sort((a, b) => b.score - a.score)
-            .slice(0, k);
-
-        // 按最低分数阈值过滤
-        if (minScore > 0) {
-            finalResults = finalResults.filter(r => r.score >= minScore);
-        }
-
-        const uniqueWarnings = [...new Set(warnings)];
-
-        if (finalResults.length === 0) {
-            let msg = `未找到与输入的 ${urlList.length} 篇日记相关联的结果`;
-            if (minScore > 0) msg += `（最低阈值: ${minScore}）`;
-            msg += '。';
-            if (uniqueWarnings.length > 0) msg += `\n${uniqueWarnings.join('\n')}`;
-            return { status: "success", result: msg };
-        }
-
-        // 格式化输出
-        let output = '';
-        if (urlList.length === 1) {
-            output += `找到 ${finalResults.length} 条与「${urlList[0]}」关联的日记`;
-        } else {
-            output += `找到 ${finalResults.length} 条与输入的 ${urlList.length} 篇日记关联的结果（已去重合并）`;
-        }
-        if (rangeList.length > 0) {
-            output += `（范围: ${rangeList.join(', ')}）`;
-        }
-        output += `：\n`;
-        if (uniqueWarnings.length > 0) output += `${uniqueWarnings.join('\n')}\n`;
-        output += '\n';
-
-        for (const entry of finalResults) {
-            output += `📄 [${entry.path}] (相似度: ${entry.score.toFixed(4)})\n`;
-            if (entry.matchedTags && entry.matchedTags.length > 0) {
-                output += `   🏷️ 匹配标签: ${entry.matchedTags.join(', ')}\n`;
-            }
-            if (entry.chunks && entry.chunks.length > 0) {
-                output += `   📝 预览: ${entry.chunks[0]}\n`;
-            }
-            output += '\n';
-        }
-
-        output += `---\n`;
-        output += `搜索统计: 共 ${urlList.length} 个源文件, 检索到 ${totalChunksFound} 个文本块, 去重后 ${mergedMap.size} 个关联文件`;
-
-        return { status: "success", result: output.trimEnd() };
-
-    } catch (error) {
-        console.error(`[DailyNoteManager] associate 命令错误:`, error);
-        return { status: "error", error: `联想搜索失败: ${error.message}` };
-    }
-}
-
-// ============================================================
 // hybridservice Interface
 // ============================================================
 function initialize(config, dependencies) {
@@ -587,15 +438,6 @@ function initialize(config, dependencies) {
             path.join(__dirname, '..', '..', 'dailynote'));
 
     configuredExtension = (process.env.DAILY_NOTE_EXTENSION || 'txt').toLowerCase() === 'md' ? 'md' : 'txt';
-
-    // 延迟加载 AssociativeDiscovery（它依赖 KnowledgeBaseManager 单例）
-    try {
-        associativeDiscovery = require('../../modules/associativeDiscovery');
-        debugLog('AssociativeDiscovery module loaded successfully');
-    } catch (e) {
-        console.error('[DailyNoteManager] Warning: Failed to load AssociativeDiscovery:', e.message);
-        console.error('[DailyNoteManager] The "associate" command will be unavailable.');
-    }
 
     console.log(`[DailyNoteManager] ✅ Initialized (hybridservice). Root: ${dailyNoteRootPath}`);
 }
@@ -610,19 +452,16 @@ async function processToolCall(args) {
             return await handleListCommand(params);
         case 'organize':
             return await handleOrganizeCommand(params);
-        case 'associate':
-            return await handleAssociateCommand(params);
         default:
             return {
                 status: "error",
-                error: `未知命令: '${command}'。可用命令: 'list'（列出日记）, 'organize'（整理日记）, 'associate'（联想关联日记）。`
+                error: `未知命令: '${command}'。可用命令: 'list'（列出日记）, 'organize'（整理日记）。`
             };
     }
 }
 
 function shutdown() {
     debugLog('Shutting down DailyNoteManager...');
-    associativeDiscovery = null;
 }
 
 module.exports = {

@@ -78,7 +78,7 @@ const currentNavGroup = computed<AppRouteGroup | undefined>(() => {
 const NAV_GROUP_LABELS: Record<AppRouteGroup, string> = {
   core: "核心",
   agentContent: "Agent & 内容",
-  knowledge: "知识 & RAG",
+  knowledge: "知识",
   toolsPlugins: "工具 & 插件",
 };
 

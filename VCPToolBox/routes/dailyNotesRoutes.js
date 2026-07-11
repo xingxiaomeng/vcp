@@ -903,48 +903,5 @@ module.exports = function (dailyNoteRootPath, DEBUG_MODE, options = {}) {
         }
     });
 
-    // POST /associative-discovery - 联想追溯
-    router.post('/associative-discovery', async (req, res) => {
-        const { sourceFilePath, k, range, tagBoost } = req.body;
-
-        if (!sourceFilePath) {
-            return res.status(400).json({ error: 'sourceFilePath is required' });
-        }
-
-        // 安全检查
-        const fullPath = path.join(dailyNoteRootPath, sourceFilePath);
-        if (!isPathSafe(fullPath, dailyNoteRootPath)) {
-            return res.status(403).json({ error: 'Invalid file path' });
-        }
-
-        try {
-            const associativeDiscovery = require('../modules/associativeDiscovery');
-
-            // 🌟 Wave v8: tagBoost 支持 "0.6+" 语法，保留字符串透传到底层
-            let parsedTagBoost;
-            if (typeof tagBoost === 'string' && tagBoost.trim().endsWith('+')) {
-                // "0.6+" → 保留原始字符串交给 KBM.search 解析
-                parsedTagBoost = tagBoost.trim();
-            } else {
-                parsedTagBoost = parseFloat(tagBoost) || 0.15;
-            }
-
-            const result = await associativeDiscovery.discover({
-                sourceFilePath,
-                k: parseInt(k) || 10,
-                range: Array.isArray(range) ? range : [],
-                tagBoost: parsedTagBoost
-            });
-
-            res.json(result);
-        } catch (error) {
-            console.error('[AssociativeDiscovery] Error:', error);
-            res.status(500).json({ 
-                error: '联想追溯失败', 
-                details: error.message 
-            });
-        }
-    });
-
     return router;
 };

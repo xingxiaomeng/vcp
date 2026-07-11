@@ -36,7 +36,7 @@ export interface DynamicToolsConfig {
   maxInjectionChars: number;
   classificationDebounceMs: number;
   classifierTimeoutMs: number;
-  useRagEmbeddings: boolean;
+  useEmbeddings: boolean;
   manualOverrides: DynamicToolsManualOverrides;
   smallModel: DynamicToolsSmallModelConfig;
 }

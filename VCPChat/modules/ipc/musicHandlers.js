@@ -10,7 +10,10 @@ const windowService = require('../services/windowService');
 const WINDOW_APP_IDS = require('../services/windowAppIds');
 const { PRELOAD_ROLES, resolveProjectPreload } = require('../services/preloadPaths');
 const AUDIO_ENGINE_URL = 'http://127.0.0.1:63789';
-let fetch;
+const fetchImpl = typeof globalThis.fetch === 'function'
+    ? globalThis.fetch.bind(globalThis)
+    : null;
+let fetch = fetchImpl;
 
 let musicWindow = null;
 let currentSongInfo = null; // 保持这个变量，用于可能的UI状态同步
@@ -21,6 +24,8 @@ let MUSIC_COVER_CACHE_DIR;
 let LYRIC_DIR;
 let startAudioEngine; // To hold the function from main.js
 let stopAudioEngine; // To hold the function from main.js
+let audioEngineKnownReady = false;
+let audioEngineReadyPromise = null;
 let musicWindowPromise = null; // To handle concurrent window creation requests
 let pendingTrackForNewWindow = null; // 用于在新窗口创建时传递待播放的曲目
 let ipcHandlersRegistered = false;
@@ -62,7 +67,7 @@ function createOrFocusMusicWindow() {
             // Always wait for the engine to be ready before creating/focusing the window.
             // Thanks to pre-warming in main.js, this should be very fast.
             if (typeof startAudioEngine === 'function') {
-                await startAudioEngine();
+                await ensureAudioEngineReady();
             } else {
                 throw new Error("startAudioEngine function not provided.");
             }
@@ -162,6 +167,42 @@ function createOrFocusMusicWindow() {
     return musicWindowPromise;
 }
 
+async function ensureAudioEngineReady() {
+    if (audioEngineKnownReady) return;
+    if (audioEngineReadyPromise) return audioEngineReadyPromise;
+
+    audioEngineReadyPromise = (async () => {
+        if (fetch) {
+            try {
+                const response = await fetch(`${AUDIO_ENGINE_URL}/state`, { method: 'GET' });
+                if (response.ok) {
+                    audioEngineKnownReady = true;
+                    return;
+                }
+            } catch (_) {
+                // Engine not responding yet — fall through to startAudioEngine.
+            }
+        }
+
+        if (typeof startAudioEngine === 'function') {
+            await startAudioEngine();
+            audioEngineKnownReady = true;
+            return;
+        }
+        throw new Error('startAudioEngine function not provided.');
+    })();
+
+    try {
+        await audioEngineReadyPromise;
+    } finally {
+        audioEngineReadyPromise = null;
+    }
+}
+
+function markAudioEngineUnavailable() {
+    audioEngineKnownReady = false;
+}
+
 // --- Audio Engine API Helper ---
 async function audioEngineApi(endpoint, method = 'POST', body = null) {
     // The check for engine readiness is now handled in createOrFocusMusicWindow,
@@ -188,6 +229,7 @@ async function audioEngineApi(endpoint, method = 'POST', body = null) {
         return await response.json();
     } catch (error) {
         console.error(`[Music] Error calling Audio Engine API endpoint '${endpoint}':`, error.message);
+        markAudioEngineUnavailable();
         if (musicWindow && !musicWindow.isDestroyed()) {
             musicWindow.webContents.send('audio-engine-error', { message: error.message });
         }
@@ -306,6 +348,13 @@ function initialize(options) {
         });
 
         ipcMain.handle('music-load', async (event, track) => {
+            if (typeof startAudioEngine === 'function') {
+                try {
+                    await ensureAudioEngineReady();
+                } catch (error) {
+                    return { status: 'error', message: `音频引擎未就绪: ${error.message}` };
+                }
+            }
             if (track && track.path) {
                 currentSongInfo = {
                     title: track.title || '未知标题',
@@ -345,8 +394,14 @@ function initialize(options) {
             return { status: 'error', message: 'Invalid track data provided.' };
         });
 
-        ipcMain.handle('music-play', () => {
-            // 只有在有歌曲信息时才真正播放
+        ipcMain.handle('music-play', async () => {
+            if (typeof startAudioEngine === 'function') {
+                try {
+                    await ensureAudioEngineReady();
+                } catch (error) {
+                    return { status: 'error', message: `音频引擎未就绪: ${error.message}` };
+                }
+            }
             if (currentSongInfo) {
                 return audioEngineApi('/play', 'POST');
             }
@@ -363,6 +418,10 @@ function initialize(options) {
 
         ipcMain.handle('music-get-state', async () => {
             return await audioEngineApi('/state', 'GET');
+        });
+
+        ipcMain.handle('music-get-loading-status', async () => {
+            return await audioEngineApi('/loading_status', 'GET');
         });
 
         ipcMain.handle('music-set-volume', (event, volume) => {
@@ -711,12 +770,34 @@ function initialize(options) {
             }
         });
 
-        ipcMain.handle('music-get-lyrics', async (event, { artist, title }) => {
+        ipcMain.handle('music-get-lyrics', async (event, { artist, title, path: trackPath, localOnly }) => {
             if (!title) return null;
 
-            // A simple sanitizer to remove characters that are invalid in file paths.
-            const sanitize = (str) => str.replace(/[\\/:"*?<>|]/g, '_');
-            const sanitizedTitle = sanitize(title);
+            const sanitize = (str) => String(str || '').replace(/[\\/:"*?<>|]/g, '_');
+            const strippedTitle = sanitize(title).replace(/\.(mp3|flac|wav|m4a|ogg|aac|wma|ape|dsf|dff|alac|aiff|opus|wv)$/i, '');
+            const sanitizedTitle = sanitize(strippedTitle || title);
+
+            const readIfExists = async (lrcPath) => {
+                try {
+                    if (await fs.pathExists(lrcPath)) {
+                        return await fs.readFile(lrcPath, 'utf-8');
+                    }
+                } catch (error) {
+                    console.error(`[Music] Error reading lyric file ${lrcPath}:`, error);
+                }
+                return null;
+            };
+
+            if (trackPath && !/^https?:\/\//i.test(trackPath)) {
+                const sidecarCandidates = [
+                    trackPath.replace(/\.[^.\\/]+$/i, '.lrc'),
+                    `${trackPath}.lrc`,
+                ];
+                for (const sidecarPath of sidecarCandidates) {
+                    const sidecarContent = await readIfExists(sidecarPath);
+                    if (sidecarContent) return sidecarContent;
+                }
+            }
 
             const possiblePaths = [];
             if (artist) {
@@ -726,21 +807,15 @@ function initialize(options) {
             possiblePaths.push(path.join(LYRIC_DIR, `${sanitizedTitle}.lrc`));
 
             for (const lrcPath of possiblePaths) {
-                try {
-                    if (await fs.pathExists(lrcPath)) {
-                        const content = await fs.readFile(lrcPath, 'utf-8');
-                        return content;
-                    }
-                } catch (error) {
-                    console.error(`[Music] Error reading lyric file ${lrcPath}:`, error);
-                }
+                const content = await readIfExists(lrcPath);
+                if (content) return content;
             }
 
             return null;
         });
 
-        ipcMain.handle('music-fetch-lyrics', async (event, { artist, title }) => {
-            if (!title) return null;
+        ipcMain.handle('music-fetch-lyrics', async (event, { artist, title, localOnly }) => {
+            if (!title || localOnly) return null;
             console.log(`[Music] IPC: Received request to fetch lyrics for "${title}" by "${artist}"`);
             try {
                 // Ensure the lyric directory exists before fetching
@@ -850,13 +925,15 @@ function initialize(options) {
     ipcHandlersRegistered = true;
     console.error('[Music] IPC handlers registered.');
     console.log('[Music] IPC handlers registered.');
-    
-    import('node-fetch').then(module => {
-        fetch = module.default;
-        console.log('[Music] node-fetch loaded successfully.');
-    }).catch(err => {
-        console.error('[Music] Failed to load node-fetch:', err);
-    });
+
+    if (!fetchImpl) {
+        import('node-fetch').then(module => {
+            fetch = module.default;
+            console.log('[Music] node-fetch loaded successfully.');
+        }).catch(err => {
+            console.error('[Music] Failed to load node-fetch:', err);
+        });
+    }
 }
 
 module.exports = {

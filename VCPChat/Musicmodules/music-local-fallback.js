@@ -16,18 +16,105 @@ function setupLocalFallback(app) {
         return `file:///${encoded}`;
     };
 
-    app.enableLocalAudioFallback = (track, reason) => {
-        console.warn('[Music] Enabling local HTML5 audio fallback:', reason, track?.path);
+    app.deactivateLocalAudioFallback = () => {
+        app.stopFallbackPolling();
+        app.useLocalAudioFallback = false;
+        app.fallbackDuration = 0;
+
+        const audio = app.phantomAudio;
+        if (!audio) return;
+
+        audio.pause();
+        audio.loop = false;
+        audio.removeAttribute('src');
+        audio.src = app.createSilentAudio();
+        audio.load();
+    };
+
+    app.enableLocalAudioFallback = (track, reason, options = {}) => {
+        const { keepLoadingState = false } = options;
+        if (reason) {
+            console.log('[Music] Using local HTML5 audio path:', reason, track?.path);
+        }
+        app.stopFallbackPolling();
         app.useLocalAudioFallback = true;
-        app.stopStatePolling();
-        app.isTrackLoading = false;
+        app.stopStatePolling?.();
+        if (!keepLoadingState) {
+            app.isTrackLoading = false;
+        }
 
         if (track?.path) {
             app.pendingTrackPath = track.path;
+            app.phantomAudio.pause();
             app.phantomAudio.loop = false;
             app.phantomAudio.src = app.pathToFileUrl(track.path);
+            app.phantomAudio.volume = Number.parseFloat(app.volumeSlider?.value ?? '1');
             app.phantomAudio.load();
         }
+    };
+
+    app.waitForFallbackMetadata = (timeoutMs = 2500) => new Promise((resolve) => {
+        const audio = app.phantomAudio;
+        if (!audio) {
+            resolve(false);
+            return;
+        }
+
+        const hasDuration = () => Number.isFinite(audio.duration) && audio.duration > 0;
+
+        if (hasDuration()) {
+            app.syncFallbackProgress();
+            resolve(true);
+            return;
+        }
+
+        const finish = (ok) => {
+            cleanup();
+            if (ok) app.syncFallbackProgress();
+            resolve(ok);
+        };
+
+        const cleanup = () => {
+            clearTimeout(timer);
+            audio.removeEventListener('loadedmetadata', onReady);
+            audio.removeEventListener('canplay', onReady);
+            audio.removeEventListener('error', onError);
+        };
+
+        const onReady = () => finish(hasDuration());
+        const onError = () => finish(false);
+        const timer = setTimeout(() => finish(hasDuration()), timeoutMs);
+
+        audio.addEventListener('loadedmetadata', onReady);
+        audio.addEventListener('canplay', onReady);
+        audio.addEventListener('error', onError, { once: true });
+    });
+
+    app.loadLocalTrackFast = async (track, andPlay, requestId) => {
+        if (!track?.path) return false;
+
+        app.enableLocalAudioFallback(track, null, { keepLoadingState: true });
+        app.bindFallbackAudioEvents();
+
+        const ready = await app.waitForFallbackMetadata(2500);
+        if (requestId !== app.pendingLoadRequestId) return false;
+
+        if (!ready) {
+            app.useLocalAudioFallback = false;
+            return false;
+        }
+
+        app.isTrackLoading = false;
+        if (andPlay) {
+            try {
+                await app.playTrackLocal();
+            } catch (error) {
+                console.error('[Music] Local fast playback failed:', error);
+                app.trackArtist.textContent = '本地播放失败 — 请确认文件存在且格式受支持';
+                return false;
+            }
+        }
+        return true;
     };
 
     app.syncFallbackProgress = () => {
@@ -123,6 +210,7 @@ function setupLocalFallback(app) {
         }
         app.enableLocalAudioFallback(track, reason);
         app.bindFallbackAudioEvents();
+        await app.waitForFallbackMetadata(2500);
         if (andPlay) {
             try {
                 await app.playTrackLocal();

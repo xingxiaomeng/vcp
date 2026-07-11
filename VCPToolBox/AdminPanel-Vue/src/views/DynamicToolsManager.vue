@@ -62,7 +62,7 @@
           <UiField label="分类去抖 ms"><UiInput v-model.number="config.classificationDebounceMs" type="number" min="0" max="60000" step="100" /></UiField>
           <UiField label="分类超时 ms"><UiInput v-model.number="config.classifierTimeoutMs" type="number" min="100" max="120000" step="1000" /></UiField>
 
-          <UiSettingsSwitchRow v-model="config.useRagEmbeddings" label="启用 RAG embedding 降级分类" data-settings-span="full" />
+          <UiSettingsSwitchRow v-model="config.useEmbeddings" label="启用 embedding 语义分类" data-settings-span="full" />
         </UiSettingsForm>
       </UiSettingsCard>
 
@@ -235,7 +235,7 @@ function createDefaultConfig(): DynamicToolsConfig {
     maxInjectionChars: 16000,
     classificationDebounceMs: 1000,
     classifierTimeoutMs: 30000,
-    useRagEmbeddings: true,
+    useEmbeddings: true,
     manualOverrides: {
       excludedOriginKeys: [],
       pinnedOriginKeys: [],

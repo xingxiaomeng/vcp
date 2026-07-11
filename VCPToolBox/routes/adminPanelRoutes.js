@@ -10,9 +10,7 @@ module.exports = function (
   DEBUG_MODE,
   dailyNoteRootPath,
   pluginManager,
-  knowledgeRootPath,
   getCurrentServerLogPath,
-  vectorDBManager,
   agentDirPath,
   cachedEmojiLists,
   tvsDirPath,
@@ -20,8 +18,7 @@ module.exports = function (
   semanticModelRouter,
   modelRedirectHandler,
   apiUrl,
-  apiKey,
-  tdbKnowledgeManager
+  apiKey
 ) {
   if (!agentDirPath || typeof agentDirPath !== "string") {
     throw new Error(
@@ -44,9 +41,7 @@ module.exports = function (
     DEBUG_MODE,
     dailyNoteRootPath,
     pluginManager,
-    knowledgeRootPath,
     getCurrentServerLogPath,
-    vectorDBManager,
     agentDirPath,
     cachedEmojiLists,
     tvsDirPath,
@@ -55,7 +50,6 @@ module.exports = function (
     modelRedirectHandler,
     apiUrl,
     apiKey,
-    tdbKnowledgeManager,
   };
 
   /**
@@ -94,7 +88,6 @@ module.exports = function (
   mount("/", "tvs"); // Handles /tvsvars/*
   mount("/", "placeholders"); // Handles /placeholders
   mount("/", "schedules"); // Handles /schedules/*
-  mount("/", "rag"); // Handles /rag-tags, /rag-params, /available-clusters, etc.
   mount("/", "agentAssistant"); // Handles /agent-assistant/*
   mount("/", "aiChat"); // Handles /ai/*
   mount("/", "openHerPersona"); // Handles /openher-persona/*
@@ -102,7 +95,7 @@ module.exports = function (
   mount("/", "toolListEditor"); // Handles /tool-list/*
   mount("/", "dynamicTools"); // Handles /dynamic-tools/*
   mount("/", "semanticRouter"); // Handles /semantic-router/*
-  mount("/", "dream"); // Handles /dream-logs/*, /dream-operation/*
+  // RAG/dream mounts intentionally omitted (local customization)
   mount("/", "dailyNotes"); // Wrapper for existing dailyNotesRoutes (Handles /dailynotes/*)
   mount("/", "newapiMonitor"); // Handles /newapi-monitor/*
   mount("/", "sarPrompts"); // Handles /sarprompts/*

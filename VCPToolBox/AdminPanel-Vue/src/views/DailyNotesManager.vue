@@ -402,7 +402,7 @@ onUnmounted(() => {
 })
 
 function resolveResourceMode(): DiaryResourceMode {
-  return route.name === 'KnowledgeBaseManager' ? 'knowledge' : 'diary'
+  return 'diary'
 }
 
 watch(

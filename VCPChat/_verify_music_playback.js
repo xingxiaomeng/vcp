@@ -3,8 +3,8 @@ const path = require('path');
 
 const ENGINE = 'http://127.0.0.1:63789';
 const TRACKS = [
+  { label: 'tianjinzui.mp3', path: 'D:/VCP/music/tianjinzui.mp3', expectEngine: false },
   { label: 'BGM001.OGG', path: 'D:/VCP/music/BGM001.OGG', expectEngine: true },
-  { label: '天津罪.mp3', path: 'D:/VCP/music/' + fs.readdirSync('D:/VCP/music').find(f => f.endsWith('.mp3') && f.includes('天津')), expectEngine: false },
 ];
 
 function pathToFileUrl(filePath) {
@@ -112,7 +112,7 @@ async function testHtmlFallback(track) {
     }
     const rust = await testRustEngine(track);
     const html = await testHtmlFallback(track);
-    const overallPass = rust.pass || (track.label.includes('天津') ? html.pass : false) || (track.label.includes('BGM') && rust.ready?.duration > 0);
+    const overallPass = rust.pass || (!track.expectEngine && html.pass) || (track.expectEngine && rust.ready?.duration > 0);
     results.push({ track: track.label, rust, html, overallPass });
     console.log('  Rust 结果:', rust.pass ? 'PASS' : 'FAIL', '-', rust.reason);
     if (rust.ready) console.log('  时长:', rust.ready.duration?.toFixed?.(1) ?? rust.ready.duration, 's');
@@ -125,11 +125,15 @@ async function testHtmlFallback(track) {
       ? '✅ Rust 引擎可播放'
       : r.rust.ready?.duration > 0
         ? '⚠️ Rust 已解码，播放进度待桌面音频设备确认'
-        : r.html.pass && r.track.includes('天津')
+        : r.html?.pass && !TRACKS.find(t => t.label === r.track)?.expectEngine
           ? '✅ 需兼容模式（Rust 无法解码，HTML5 可接管）'
-          : r.html.pass && r.rust.reason?.includes('ECONNREFUSED')
+          : r.html?.pass && r.rust.reason?.includes('ECONNREFUSED')
             ? '❌ 引擎崩溃'
             : '⚠️ 见详情';
     console.log(`${r.track}: ${verdict}`);
+  }
+
+  if (results.some(r => !r.overallPass)) {
+    process.exitCode = 1;
   }
 })();

@@ -14,7 +14,6 @@
     "protocol": "direct",
     "timeout": 30000
   },
-  "requiresContextBridge": true,
   "configSchema": {
     "DebugMode": "boolean",
     "OpenHerPersonaEnabled": "boolean",

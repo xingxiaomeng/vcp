@@ -3,11 +3,9 @@ export const APP_ROUTE_COMPONENTS = {
   dashboard: () => import("@/views/Dashboard.vue"),
   "base-config": () => import("@/views/BaseConfig.vue"),
   "daily-notes-manager": () => import("@/views/DailyNotesManager.vue"),
-  "knowledge-base-manager": () => import("@/views/DailyNotesManager.vue"),
   "vcp-forum": () => import("@/views/VcpForum.vue"),
   "image-cache-editor": () => import("@/views/ImageCacheEditor.vue"),
   "emoji-gallery": () => import("@/views/EmojiGallery.vue"),
-  "semantic-groups-editor": () => import("@/views/SemanticGroupsEditor.vue"),
   "vcptavern-editor": () => import("@/views/VcptavernEditor.vue"),
   "agent-files-editor": () => import("@/views/AgentFilesEditor.vue"),
   "agent-assistant-config": () => import("@/views/AgentAssistantConfig.vue"),
@@ -23,11 +21,7 @@ export const APP_ROUTE_COMPONENTS = {
   "preprocessor-order-manager": () =>
     import("@/views/PreprocessorOrderManager.vue"),
   "tool-approval-manager": () => import("@/views/ToolApprovalManager.vue"),
-  "tool-call-records-manager": () => import("@/views/ToolCallRecordsManager.vue"),
-  "thinking-chains-editor": () => import("@/views/ThinkingChainsEditor.vue"),
-  "rag-tuning": () => import("@/views/RagTuning.vue"),
   "schedule-manager": () => import("@/views/ScheduleManager.vue"),
-  "dream-manager": () => import("@/views/DreamManager.vue"),
   "server-log-viewer": () => import("@/views/ServerLogViewer.vue"),
   "semantic-model-router-editor": () =>
     import("@/views/SemanticModelRouterEditor.vue"),

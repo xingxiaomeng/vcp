@@ -2,12 +2,77 @@
 // 核心播放逻辑
 
 function setupPlayer(app) {
+    app.trackPathsMatch = (enginePath, trackPath) => {
+        if (!enginePath || !trackPath) return false;
+        if (app.pathsEqual(enginePath, trackPath)) return true;
+        const left = app.normalizePathForCompare(enginePath);
+        const right = app.normalizePathForCompare(trackPath);
+        return Boolean(left && right && left.split('/').pop() === right.split('/').pop());
+    };
+
+    app.waitForEngineTrackReady = async (track, requestId, timeoutMs = 8000) => {
+        const timeoutAt = Date.now() + timeoutMs;
+        let pollInterval = 50;
+
+        while (Date.now() < timeoutAt) {
+            if (requestId !== app.pendingLoadRequestId) return false;
+
+            let loadingStatus = null;
+            try {
+                loadingStatus = await app.api.getMusicLoadingStatus?.();
+            } catch (error) {
+                console.error('[Music.js] Engine loading status poll failed:', error);
+                return 'engine_down';
+            }
+
+            const loadError = loadingStatus?.loading?.error;
+            if (loadError) {
+                console.error('[Music.js] Track load failed:', loadError);
+                return false;
+            }
+
+            if (loadingStatus?.loading?.is_loading === false) {
+                let stateResult;
+                try {
+                    stateResult = await app.api.getMusicState();
+                } catch (error) {
+                    console.error('[Music.js] Engine state poll failed:', error);
+                    return 'engine_down';
+                }
+
+                if (stateResult?.status === 'error' && app.isEngineUnavailableError(stateResult.message)) {
+                    return 'engine_down';
+                }
+
+                if (stateResult?.status === 'success' && stateResult.state) {
+                    const state = stateResult.state;
+                    app.updateUIWithState(state);
+
+                    if (app.trackPathsMatch(state.file_path, track.path)) {
+                        return true;
+                    }
+
+                    if ((state.duration ?? 0) > 0 && state.file_path) {
+                        return true;
+                    }
+
+                    if (!state.file_path) {
+                        return false;
+                    }
+                }
+            }
+
+            await new Promise(r => setTimeout(r, pollInterval));
+            pollInterval = Math.min(pollInterval + 25, 200);
+        }
+
+        console.warn('[Music.js] waitForEngineTrackReady timed out for:', track.title);
+        return false;
+    };
+
     app.loadTrack = async (trackIndex, andPlay = true) => {
         const requestId = ++app.pendingLoadRequestId;
         app.isPreloadingNext = false;
-        try {
-            await app.api?.cancelMusicPreload?.();
-        } catch (e) {}
 
         if (app.playlist.length === 0) {
             app.trackTitle.textContent = '未选择歌曲';
@@ -24,6 +89,10 @@ function setupPlayer(app) {
         const track = app.playlist[trackIndex];
         app.pendingTrackPath = track.path;
         app.isTrackLoading = true;
+        const switchingLocalToLocal = app.isLocalTrack(track) && app.useLocalAudioFallback;
+        if (!switchingLocalToLocal) {
+            app.deactivateLocalAudioFallback?.();
+        }
 
         app.trackTitle.textContent = app.stripAudioExtension(track.title) || '未知标题';
         app.trackArtist.textContent = track.artist || '未知艺术家';
@@ -40,48 +109,93 @@ function setupPlayer(app) {
         }
 
         app.renderPlaylist(app.currentFilteredTracks);
-        app.fetchAndDisplayLyrics(track.artist, track.title);
+        app.fetchAndDisplayLyricsForTrack(track);
         app.updateMediaSessionMetadata();
         if (app.wnpAdapter) app.wnpAdapter.sendUpdate();
 
+        if (app.isLocalTrack(track)) {
+            app.stopStatePolling?.();
+            app.api?.musicPause?.().catch(() => {});
+            app.useLocalAudioFallback = false;
+            app.bindFallbackAudioEvents();
+            const localReady = await app.loadLocalTrackFast(track, andPlay, requestId);
+            if (requestId !== app.pendingLoadRequestId) return;
+            if (localReady) return;
+
+            console.warn('[Music.js] Local fast path failed, falling back to Rust engine:', track.path);
+        }
+
+        try {
+            await app.api?.cancelMusicPreload?.();
+        } catch (e) {}
+
+        app.useLocalAudioFallback = false;
+        app.bindFallbackAudioEvents();
+
         const result = await app.api.musicLoad(track);
+        if (requestId !== app.pendingLoadRequestId) return;
+
         if (result && result.status === 'success') {
             app.updateUIWithState(result.state);
 
-            const waitForTrackReady = async () => {
-                const timeoutAt = Date.now() + 12000;
-                const targetPath = app.normalizePathForCompare(track.path);
-                let pollInterval = 120;
-
-                while (Date.now() < timeoutAt) {
-                    if (requestId !== app.pendingLoadRequestId) return false;
-
-                    const stateResult = await app.api.getMusicState();
-                    if (stateResult && stateResult.status === 'success' && stateResult.state) {
-                        const state = stateResult.state;
-                        app.updateUIWithState(state);
-                        const loadedPath = app.normalizePathForCompare(state.file_path);
-                        if (loadedPath === targetPath && !state.is_loading) return true;
-                    }
-                    await new Promise(r => setTimeout(r, pollInterval));
-                    // 逐步增大轮询间隔，避免高频轮询（最大 500ms）
-                    pollInterval = Math.min(pollInterval + 50, 500);
+            const ready = await app.waitForEngineTrackReady(track, requestId);
+            if (requestId !== app.pendingLoadRequestId) return;
+            app.isTrackLoading = false;
+            if (ready === true) {
+                let finalState;
+                try {
+                    finalState = await app.api.getMusicState();
+                } catch (_) {
+                    finalState = null;
                 }
-                console.warn('[Music.js] waitForTrackReady timed out for:', track.title);
-                return false;
-            };
-
-            const ready = await waitForTrackReady();
-            if (requestId === app.pendingLoadRequestId) app.isTrackLoading = false;
-            if (andPlay && ready) app.playTrack();
+                const decodedDuration = finalState?.state?.duration ?? 0;
+                if (decodedDuration <= 0) {
+                    const ok = await app.tryLocalFallbackPlayback(
+                        track,
+                        andPlay,
+                        '引擎未能解码此文件（可能为特殊封装格式）'
+                    );
+                    if (!ok && andPlay) {
+                        app.trackArtist.textContent = '加载失败 — 请确认文件存在且格式受支持';
+                    }
+                    return;
+                }
+                app.useLocalAudioFallback = false;
+                if (andPlay) app.playTrack();
+            } else {
+                const fallbackReason = ready === 'engine_down'
+                    ? '音频引擎崩溃或未响应'
+                    : 'Rust 引擎加载失败';
+                const ok = await app.tryLocalFallbackPlayback(track, andPlay, fallbackReason);
+                if (!ok && andPlay) {
+                    console.error('[Music.js] Track not ready for playback:', track.title, track.path);
+                    app.trackArtist.textContent = '加载失败 — 请确认文件存在且格式受支持';
+                }
+            }
         } else {
             if (requestId === app.pendingLoadRequestId) app.isTrackLoading = false;
-            console.error("Failed to load track:", result.message);
+            console.error('Failed to load track:', result?.message);
+            const ok = await app.tryLocalFallbackPlayback(
+                track,
+                andPlay,
+                result?.message || 'engine load failed'
+            );
+            if (!ok && andPlay) {
+                app.trackArtist.textContent = '加载失败 — 请确认文件存在且格式受支持';
+            }
         }
     };
 
     app.playTrack = async () => {
         if (app.playlist.length === 0 || app.isTrackLoading) return;
+        if (app.useLocalAudioFallback) {
+            try {
+                await app.playTrackLocal();
+            } catch (error) {
+                console.error('Local fallback play failed:', error);
+            }
+            return;
+        }
         const result = await app.api.musicPlay();
         if (result.status === 'success') {
             app.isChangingState = true;
@@ -100,6 +214,10 @@ function setupPlayer(app) {
     };
 
     app.pauseTrack = async () => {
+        if (app.useLocalAudioFallback) {
+            await app.pauseTrackLocal();
+            return;
+        }
         const result = await app.api.musicPause();
         if (result.status === 'success') {
             app.isChangingState = true;
@@ -184,7 +302,7 @@ function setupPlayer(app) {
     };
 
     app.handleNeedsPreload = async () => {
-        if (app.isPreloadingNext) return;
+        if (app.useLocalAudioFallback || app.isPreloadingNext) return;
         const activeList = app.currentFilteredTracks || app.playlist;
         if (activeList.length === 0) return;
 
@@ -249,7 +367,7 @@ function setupPlayer(app) {
     app.syncTrackIndexByPath = (path) => {
         if (!path) return;
         const normalizedPath = app.normalizePathForCompare(path);
-        const index = app.playlist.findIndex(t => app.normalizePathForCompare(t.path) === normalizedPath);
+        const index = app.playlist.findIndex(t => app.pathsEqual(t.path, path));
         if (index !== -1) {
             console.log('[Music.js] Syncing track index to:', index, 'path:', normalizedPath);
             app.currentTrackIndex = index;
@@ -271,7 +389,7 @@ function setupPlayer(app) {
             }
             
             app.renderPlaylist(app.currentFilteredTracks);
-            app.fetchAndDisplayLyrics(track.artist, track.title);
+            app.fetchAndDisplayLyricsForTrack(track);
             app.updateMediaSessionMetadata();
 
             // 如果是随机播放，从队列中移除当前已开始播放的这首歌，防止之后再次随机到它
@@ -318,7 +436,7 @@ function setupPlayer(app) {
                     }
                     
                     app.renderPlaylist(app.currentFilteredTracks);
-                    app.fetchAndDisplayLyrics(track.artist, track.title);
+                    app.fetchAndDisplayLyricsForTrack(track);
                     app.updateMediaSessionMetadata();
 
                     // 同样处理模糊匹配的情况

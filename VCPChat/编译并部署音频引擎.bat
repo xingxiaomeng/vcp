@@ -6,8 +6,6 @@ set "ENGINE_DIR=%ROOT_DIR%rust_audio_engine"
 set "DEPLOY_DIR=%ROOT_DIR%audio_engine"
 set "SOURCE_EXE=%ENGINE_DIR%\target\release\audio_server.exe"
 set "TARGET_EXE=%DEPLOY_DIR%\audio_server.exe"
-set "PKGCONF_DIR=H:\VCP\vcpkg\installed\x64-windows-static\tools\pkgconf"
-set "PKGCONFIG_DIR=H:\VCP\vcpkg\installed\x64-windows-static\lib\pkgconfig"
 
 echo [VCP] Building Rust audio engine...
 echo [VCP] Engine dir: "%ENGINE_DIR%"
@@ -18,9 +16,11 @@ if not exist "%ENGINE_DIR%\Cargo.toml" (
     goto :fail
 )
 
-set "PATH=%PKGCONF_DIR%;%PATH%"
-set "PKG_CONFIG_PATH=%PKGCONFIG_DIR%"
-set "RUSTFLAGS=-C target-cpu=native"
+call "%ENGINE_DIR%\scripts\setup-build-env.bat"
+if errorlevel 1 (
+    set "EXIT_CODE=1"
+    goto :fail_with_code
+)
 
 pushd "%ENGINE_DIR%"
 cargo build --release
@@ -38,13 +38,7 @@ if not exist "%SOURCE_EXE%" (
     goto :fail
 )
 
-if not exist "%DEPLOY_DIR%" (
-    mkdir "%DEPLOY_DIR%"
-    if errorlevel 1 (
-        echo [VCP][ERROR] Failed to create deploy dir: "%DEPLOY_DIR%"
-        goto :fail
-    )
-)
+if not exist "%DEPLOY_DIR%" mkdir "%DEPLOY_DIR%"
 
 copy /Y "%SOURCE_EXE%" "%TARGET_EXE%"
 if errorlevel 1 (

@@ -247,16 +247,6 @@
             appAction: 'open-forum-window',
         },
         {
-            id: 'vchat-app-rag-observer',
-            name: 'RAG监听',
-            icon: `${ICON_BASE}/信息流.png`,
-            animatedIcon: null,
-            svgIcon: SVG_ICONS.rag,
-            emoji: '📡',
-            description: '打开 VCP RAG 信息流监听器',
-            appAction: 'open-rag-observer-window',
-        },
-        {
             id: 'vchat-app-dice',
             name: '丢骰子',
             icon: `${ICON_BASE}/dice.png`,

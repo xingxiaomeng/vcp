@@ -2,35 +2,79 @@
 // 歌词获取、解析、渲染、动画
 
 function setupLyrics(app) {
-    app.fetchAndDisplayLyrics = async (artist, title) => {
+    app.lyricsRequestToken = app.lyricsRequestToken || 0;
+    app._localLyricsMissCache = app._localLyricsMissCache || new Set();
+
+    app.fetchAndDisplayLyricsForTrack = async (track) => {
+        if (!track) return;
+
         const requestToken = ++app.lyricsRequestToken;
-        app.resetLyrics();
+        app.resetLyrics(false);
         if (!app.api?.getMusicLyrics) return;
 
-        const lrcContent = await app.api.getMusicLyrics({ artist, title });
+        const title = app.stripAudioExtension(track.title) || track.title;
+        const artist = track.artist || '';
+
+        if (app.isLocalTrack(track)) {
+            const cacheKey = app.normalizePathForCompare(track.path);
+            if (cacheKey && app._localLyricsMissCache.has(cacheKey)) {
+                app.lyricsList.innerHTML = '<li class="no-lyrics">本地音乐暂无歌词</li>';
+                return;
+            }
+
+            let lrcContent = null;
+            try {
+                lrcContent = await app.api.getMusicLyrics({
+                    artist,
+                    title,
+                    path: track.path,
+                    localOnly: true,
+                });
+            } catch (error) {
+                console.warn('[Music] Local lyric lookup failed:', error);
+            }
+
+            if (requestToken !== app.lyricsRequestToken) return;
+
+            if (lrcContent) {
+                app.currentLyrics = app.parseLrc(lrcContent);
+                app.renderLyrics();
+                return;
+            }
+
+            if (cacheKey) app._localLyricsMissCache.add(cacheKey);
+            app.lyricsList.innerHTML = '<li class="no-lyrics">本地音乐暂无歌词</li>';
+            return;
+        }
+
+        const lrcContent = await app.api.getMusicLyrics({ artist, title, path: track.path });
         if (requestToken !== app.lyricsRequestToken) return;
 
         if (lrcContent) {
             app.currentLyrics = app.parseLrc(lrcContent);
             app.renderLyrics();
-        } else {
-            // 尝试从网络获取歌词
-            app.lyricsList.innerHTML = '<li class="no-lyrics">正在网络上搜索歌词...</li>';
-            try {
-                const fetchedLrc = await app.api.fetchMusicLyrics({ artist, title });
-                if (requestToken !== app.lyricsRequestToken) return;
-                if (fetchedLrc) {
-                    app.currentLyrics = app.parseLrc(fetchedLrc);
-                    app.renderLyrics();
-                } else {
-                    app.lyricsList.innerHTML = '<li class="no-lyrics">暂无歌词</li>';
-                }
-            } catch (error) {
-                if (requestToken !== app.lyricsRequestToken) return;
-                console.error('Failed to fetch lyrics from network:', error);
-                app.lyricsList.innerHTML = '<li class="no-lyrics">歌词获取失败</li>';
-            }
+            return;
         }
+
+        app.lyricsList.innerHTML = '<li class="no-lyrics">正在网络上搜索歌词...</li>';
+        try {
+            const fetchedLrc = await app.api.fetchMusicLyrics({ artist, title });
+            if (requestToken !== app.lyricsRequestToken) return;
+            if (fetchedLrc) {
+                app.currentLyrics = app.parseLrc(fetchedLrc);
+                app.renderLyrics();
+            } else {
+                app.lyricsList.innerHTML = '<li class="no-lyrics">暂无歌词</li>';
+            }
+        } catch (error) {
+            if (requestToken !== app.lyricsRequestToken) return;
+            console.error('Failed to fetch lyrics from network:', error);
+            app.lyricsList.innerHTML = '<li class="no-lyrics">歌词获取失败</li>';
+        }
+    };
+
+    app.fetchAndDisplayLyrics = (artist, title) => {
+        app.fetchAndDisplayLyricsForTrack({ artist, title, path: null, isRemote: true });
     };
 
     app.parseLrc = (lrcContent) => {
@@ -122,7 +166,6 @@ function setupLyrics(app) {
             }
         });
 
-        // 平滑滚动
         if (app.currentLyricIndex > -1) {
             const currentLine = app.currentLyrics[app.currentLyricIndex];
             const nextLine = app.currentLyrics[app.currentLyricIndex + 1];
@@ -149,10 +192,12 @@ function setupLyrics(app) {
         }
     };
 
-    app.resetLyrics = () => {
+    app.resetLyrics = (showLoading = true) => {
         app.currentLyrics = [];
         app.currentLyricIndex = -1;
-        app.lyricsList.innerHTML = '<li class="no-lyrics">加载歌词中...</li>';
+        app.lyricsList.innerHTML = showLoading
+            ? '<li class="no-lyrics">加载歌词中...</li>'
+            : '<li class="no-lyrics">暂无歌词</li>';
         app.lyricsList.style.transform = 'translateY(0px)';
     };
 }
