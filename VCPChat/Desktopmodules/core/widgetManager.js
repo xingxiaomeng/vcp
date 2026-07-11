@@ -1,12 +1,19 @@
 /**
  * VCPdesktop - 挂件管理核心模块
  * 负责：挂件创建/删除/内容管理、Shadow DOM 隔离、内联脚本/样式处理、自动尺寸调整
+ *
+ * 标准能力（拖动/缩放/关闭/右键/流体布局等）统一由 widgetStandards 安装，
+ * 所有新建挂件（内置、收藏、DESKTOP_PUSH、Remote）只要走 create() 即自动具备。
  */
 
 'use strict';
 
 (function () {
-    const { state, CONSTANTS, domRefs, drag, zIndex } = window.VCPDesktop;
+    const { state, CONSTANTS, domRefs, zIndex } = window.VCPDesktop;
+    const standards = window.VCPDesktop.widgetStandards;
+    if (!standards) {
+        throw new Error('[Desktop] widgetStandards.js must load before widgetManager.js');
+    }
     const removingWidgetIds = new Set();
     const REMOVE_FALLBACK_MS = 450;
 
@@ -15,7 +22,7 @@
     // ============================================================
 
     /**
-     * 创建挂件容器
+     * 创建挂件容器（唯一入口：自动安装全部标准宿主能力）
      * @param {string} widgetId - 挂件唯一标识
      * @param {object} [options] - 位置/尺寸选项
      * @returns {object} widgetData
@@ -28,7 +35,12 @@
 
         if (state.widgets.has(widgetId)) {
             console.log(`[Desktop] Widget ${widgetId} already exists, reusing.`);
-            return state.widgets.get(widgetId);
+            const existing = state.widgets.get(widgetId);
+            // 复用时仍确保标准能力完整（防止 DOM 被外部改坏）
+            standards.ensureChrome(existing.element);
+            standards.ensureFluidHostStyles(existing);
+            standards.annotate(existing);
+            return existing;
         }
 
         const widget = document.createElement('div');
@@ -73,36 +85,6 @@
 
         const shadowRoot = contentWrapper.attachShadow({ mode: 'open' });
 
-        const shadowStyle = document.createElement('style');
-        shadowStyle.textContent = `
-            :host {
-                display: block;
-                width: 100%;
-                height: 100%;
-                overflow: auto;
-            }
-            * { box-sizing: border-box; }
-            .widget-inner-content {
-                width: 100%;
-                height: 100%;
-                min-height: 100%;
-            }
-            .widget-inner-content > *:not(style):not(script) {
-                max-width: 100%;
-            }
-            .widget-inner-content > div:first-of-type,
-            .widget-inner-content > section:first-of-type,
-            .widget-inner-content > article:first-of-type {
-                width: 100%;
-                min-height: 100%;
-                box-sizing: border-box;
-            }
-            ::-webkit-scrollbar { width: 4px; }
-            ::-webkit-scrollbar-track { background: transparent; }
-            ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.3); border-radius: 2px; }
-        `;
-        shadowRoot.appendChild(shadowStyle);
-
         const contentContainer = document.createElement('div');
         contentContainer.className = 'widget-inner-content';
         shadowRoot.appendChild(contentContainer);
@@ -114,12 +96,6 @@
         widget.addEventListener('animationend', () => {
             widget.classList.remove('entering');
         }, { once: true });
-
-        // 拖拽 + 八向缩放（所有挂件统一具备）
-        drag.setup(widget, grip);
-        if (drag.setupResize) {
-            drag.setupResize(widget);
-        }
 
         // 右键菜单
         widget.addEventListener('contextmenu', (e) => {
@@ -157,12 +133,15 @@
             widget.classList.add('user-resized');
         }
 
+        // ★ 标准能力：拖动 / 缩放 / 流体布局 —— 所有新建挂件强制具备
+        standards.applyAll(widgetData, grip);
+
         // 监听 Shadow DOM 内容变化，自动调整尺寸
         // 这确保异步脚本（如天气数据加载）修改内容后挂件能自动适配
         setupContentObserver(widgetData);
 
         state.widgets.set(widgetId, widgetData);
-        console.log(`[Desktop] Widget created: ${widgetId}`);
+        console.log(`[Desktop] Widget created with standard chrome: ${widgetId}`);
         return widgetData;
     }
 
@@ -239,6 +218,11 @@
 
         const widgetData = state.widgets.get(widgetId);
         if (!widgetData) return;
+
+        // finalize 时再次确保标准能力（流式创建中途不应丢失）
+        standards.ensureChrome(widgetData.element);
+        standards.ensureFluidHostStyles(widgetData);
+        standards.annotate(widgetData);
 
         widgetData.isConstructing = false;
         widgetData.element.classList.remove('constructing');
@@ -759,6 +743,16 @@
         autoResize: autoResizeWidget,
         processInlineStyles,
         processInlineScripts,
+        /** 宿主自动提供的标准能力（新建挂件勿重复实现） */
+        getStandardCapabilities: () => standards.listCapabilities(),
+        ensureStandardChrome: (widgetId) => {
+            const widgetData = state.widgets.get(widgetId);
+            if (!widgetData) return false;
+            standards.ensureChrome(widgetData.element);
+            standards.ensureFluidHostStyles(widgetData);
+            standards.annotate(widgetData);
+            return true;
+        },
     };
 
 })();

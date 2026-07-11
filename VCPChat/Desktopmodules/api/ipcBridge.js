@@ -176,6 +176,7 @@
                                 savedId: savedResult?.id || null,
                                 savedName: savedResult?.name || null,
                                 builtinWidgetKey: builtinKey,
+                                standardCapabilities: window.VCPDesktop.widget?.getStandardCapabilities?.() || [],
                             },
                         });
                         return;
@@ -222,6 +223,7 @@
                             widgetId,
                             savedId: preSavedId || savedResult?.id || null,
                             savedName: (preSavedId ? saveName : savedResult?.name) || null,
+                            standardCapabilities: window.VCPDesktop.widget?.getStandardCapabilities?.() || [],
                         },
                     });
                     return;

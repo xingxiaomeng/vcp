@@ -6,7 +6,8 @@
  *   core/theme.js          - 主题同步（light/dark）
  *   core/statusIndicator.js - 底部状态指示器
  *   core/zIndexManager.js  - Z-Index 层级管理
- *   core/dragSystem.js     - 拖拽系统（带限位）
+ *   core/dragSystem.js     - 拖拽/缩放系统（Pointer Capture + 限位）
+ *   core/widgetStandards.js - 挂件标准能力层（新建挂件自动安装）
  *   core/widgetManager.js  - 挂件管理核心（创建/删除/Shadow DOM/脚本处理）
  *   ui/contextMenu.js      - 右键菜单系统
  *   ui/saveModal.js        - 收藏命名模态窗

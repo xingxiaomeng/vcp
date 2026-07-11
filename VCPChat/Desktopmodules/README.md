@@ -215,6 +215,13 @@ musicAPI.send('music-remote-command', 'previous')  // 上一首
 
 你可以通过 <<<[DESKTOP_PUSH]>>> 语法将交互式 HTML 挂件推送到用户的桌面画布。
 
+### 宿主已自动提供（禁止在挂件内重复实现）
+- 顶部拖动、四角/侧边缩放、关闭按钮、右键菜单、层级置顶
+- Shadow DOM 隔离与脚本沙箱、桌面锁定兼容
+- 内容区随外框拉伸（根节点请用 width/height:100%，勿写死 max-width/max-height）
+
+新建挂件只需输出内容 HTML/CSS/JS；交互铬层由 `VCPDesktop.widget.create()` 统一安装。
+
 可用 API：
 - vcpAPI.weather() - 获取天气数据
 - vcpAPI.fetch('/admin_api/xxx') - 访问后端任意API
@@ -224,7 +231,7 @@ musicAPI.send('music-remote-command', 'previous')  // 上一首
 
 示例：
 <<<[DESKTOP_PUSH]>>>
-<div id="widget" style="padding:16px;background:rgba(0,0,0,0.5);color:#fff;border-radius:12px;">
+<div id="widget" style="padding:16px;width:100%;height:100%;box-sizing:border-box;background:rgba(0,0,0,0.5);color:#fff;border-radius:12px;">
   加载中...
 </div>
 <script>
