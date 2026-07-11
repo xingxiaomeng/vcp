@@ -1,6 +1,6 @@
 // modules/ipc/musicHandlers.js
 
-const { ipcMain, BrowserWindow, dialog } = require('electron');
+const { ipcMain, BrowserWindow, dialog, app } = require('electron');
 const path = require('path');
 const fs = require('fs-extra');
 const { Worker } = require('worker_threads');
@@ -448,6 +448,54 @@ function initialize(options) {
 
         ipcMain.handle('music-save-online-config', async (event, config) => {
             return onlineMusicClient.saveConfig(config || {});
+        });
+
+        ipcMain.handle('music-choose-online-download-dir', async () => {
+            const config = await onlineMusicClient.loadConfig();
+            const result = await dialog.showOpenDialog(musicWindow || mainWindow, {
+                title: '选择在线歌曲下载目录',
+                defaultPath: config.downloadDir || app.getPath('music'),
+                properties: ['openDirectory', 'createDirectory'],
+            });
+            if (result.canceled || !result.filePaths?.[0]) {
+                return { status: 'cancelled' };
+            }
+            const downloadDir = result.filePaths[0];
+            await onlineMusicClient.saveConfig({ downloadDir });
+            return { status: 'success', downloadDir };
+        });
+
+        ipcMain.handle('music-download-online-track', async (event, { meta, targetPath } = {}) => {
+            try {
+                const { buildMp3Filename } = require('../mp3Encoder');
+                const config = await onlineMusicClient.loadConfig();
+                const defaultName = buildMp3Filename(meta || {});
+                const defaultDir = config.downloadDir || app.getPath('music');
+                let outPath = targetPath;
+
+                if (!outPath) {
+                    const result = await dialog.showSaveDialog(musicWindow || mainWindow, {
+                        title: '保存为 MP3',
+                        defaultPath: path.join(defaultDir, defaultName),
+                        filters: [{ name: 'MP3 音频', extensions: ['mp3'] }],
+                    });
+                    if (result.canceled || !result.filePath) {
+                        return { status: 'cancelled' };
+                    }
+                    outPath = result.filePath;
+                }
+
+                if (!/\.mp3$/i.test(outPath)) outPath = `${outPath}.mp3`;
+
+                const downloaded = await onlineMusicClient.downloadOnlineTrackAsMp3(meta || {}, outPath, {
+                    BrowserWindow,
+                });
+                return { status: 'success', ...downloaded };
+            } catch (error) {
+                const message = error?.message || String(error) || '下载失败';
+                console.error('[Music] Online download failed:', message);
+                return { status: 'error', message };
+            }
         });
 
         ipcMain.handle('music-play', async () => {

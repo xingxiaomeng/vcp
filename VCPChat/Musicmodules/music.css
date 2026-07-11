@@ -1627,10 +1627,42 @@ body.sidebar-collapsed .left-sidebar > * {
 }
 
 .online-result-header {
-    opacity: 0.7;
+    opacity: 0.85;
     font-size: 0.78em;
-    pointer-events: none;
     padding: 8px 12px !important;
+    display: flex !important;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    cursor: default;
+}
+
+.online-result-header-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.online-dir-btn {
+    flex-shrink: 1;
+    max-width: 55%;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.06);
+    color: inherit;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 0.92em;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.85;
+}
+
+.online-dir-btn:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.12);
 }
 
 .online-result-item {
@@ -1638,6 +1670,23 @@ body.sidebar-collapsed .left-sidebar > * {
     align-items: center;
     gap: 10px;
     cursor: pointer;
+}
+
+.online-result-item.is-resolving {
+    opacity: 0.85;
+    pointer-events: none;
+}
+
+.online-result-item.is-playing,
+.online-result-item.active {
+    background: rgba(120, 180, 255, 0.16);
+}
+
+.online-result-item.is-playing .online-result-badge,
+.online-result-item.is-resolving .online-result-badge {
+    border-color: rgba(120, 180, 255, 0.45);
+    background: rgba(120, 180, 255, 0.18);
+    opacity: 1;
 }
 
 .online-result-art {
@@ -1669,6 +1718,13 @@ body.sidebar-collapsed .left-sidebar > * {
     text-overflow: ellipsis;
 }
 
+.online-result-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
 .online-result-badge {
     flex-shrink: 0;
     font-size: 0.68em;
@@ -1676,6 +1732,73 @@ body.sidebar-collapsed .left-sidebar > * {
     border: 1px solid rgba(255, 255, 255, 0.18);
     border-radius: 999px;
     padding: 2px 6px;
+}
+
+.online-download-btn {
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(120, 180, 255, 0.14);
+    color: inherit;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 0.72em;
+    cursor: pointer;
+    line-height: 1.4;
+}
+
+.online-download-btn:hover {
+    background: rgba(120, 180, 255, 0.28);
+}
+
+.online-download-btn:disabled {
+    opacity: 0.55;
+    cursor: wait;
+}
+
+.online-result-pager {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 6px 10px !important;
+    cursor: default;
+    opacity: 0.9;
+    font-size: 0.78em;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.online-result-pager-bottom {
+    margin-top: 4px;
+}
+
+.online-page-info {
+    min-width: 7.5em;
+    text-align: center;
+    opacity: 0.8;
+}
+
+.online-page-btn {
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.06);
+    color: inherit;
+    border-radius: 6px;
+    padding: 2px 8px;
+    cursor: pointer;
+    line-height: 1.4;
+    min-width: 1.8em;
+}
+
+.online-page-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.online-page-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.online-download-tip {
+    color: rgba(160, 220, 160, 0.95) !important;
 }
 
 .sidebar-action-btns {

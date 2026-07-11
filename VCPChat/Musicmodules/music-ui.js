@@ -86,6 +86,13 @@ function setupUI(app) {
     };
 
     app.renderPlaylist = (filtered) => {
+        // 联网搜索模式下保留搜索结果，避免 loadTrack / 切歌时把列表冲掉
+        if (app.isOnlineSearchActive) {
+            if (app.onlineSearchResults?.length && typeof app.renderOnlineSearchResults === 'function') {
+                app.renderOnlineSearchResults(app.onlineSearchResults);
+            }
+            return;
+        }
         const songs = filtered || app.playlist;
         app.playlistEl.innerHTML = '';
         const frag = document.createDocumentFragment();

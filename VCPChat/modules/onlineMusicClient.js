@@ -171,10 +171,12 @@ async function loadConfig() {
     const defaults = {
         spotifyClientId: '',
         spotifyClientSecret: '',
-        preferredAudioSource: 'auto', // auto | netease | youtube
+        preferredAudioSource: 'auto', // auto | netease | youtube | bilibili
         // 本机代理，例如 http://127.0.0.1:7890；留空则自动探测常见端口 / 环境变量
         proxyUrl: '',
         proxyEnabled: true,
+        // 在线下载默认目录（可在保存对话框中每次改）
+        downloadDir: '',
     };
     if (!configPath) return defaults;
     try {
@@ -242,32 +244,51 @@ function isJunkTitle(name) {
     return /(正式版|伤感版|抖音|cover|翻唱|live\s*版|伴奏)/i.test(String(name || ''));
 }
 
-async function searchItunes(query, limit = 20) {
-    const response = await axios.get('https://itunes.apple.com/search', {
-        params: {
-            term: query,
-            entity: 'song',
-            limit,
-            country: 'cn',
-            lang: 'zh_cn',
-        },
-        timeout: 12000,
-        headers: { 'User-Agent': UA },
-    });
-    const results = Array.isArray(response.data?.results) ? response.data.results : [];
-    return results
-        .filter((item) => item.trackName && item.artistName)
-        .map((item) => ({
-            id: `itunes:${item.trackId}`,
-            provider: 'itunes',
-            title: item.trackName,
-            artist: item.artistName,
-            album: item.collectionName || '',
-            albumArt: String(item.artworkUrl100 || '').replace('100x100bb', '600x600bb'),
-            durationMs: item.trackTimeMillis || 0,
-            previewUrl: item.previewUrl || '',
-            externalUrl: item.trackViewUrl || '',
-        }));
+async function searchItunes(query, limit = 500) {
+    const capped = Math.min(Math.max(Number(limit) || 500, 1), 500);
+    const countries = ['cn', 'us', 'jp', 'tw', 'hk', 'kr', 'gb', 'sg', 'my', 'ca', 'au', 'de', 'fr'];
+    const seen = new Set();
+    const merged = [];
+
+    for (const country of countries) {
+        if (merged.length >= capped) break;
+        try {
+            // eslint-disable-next-line no-await-in-loop
+            const response = await axios.get('https://itunes.apple.com/search', {
+                params: {
+                    term: query,
+                    entity: 'song',
+                    limit: 200, // iTunes 单次上限 200，靠多区合并凑满
+                    country,
+                    lang: 'zh_cn',
+                },
+                timeout: 12000,
+                headers: { 'User-Agent': UA },
+            });
+            const results = Array.isArray(response.data?.results) ? response.data.results : [];
+            for (const item of results) {
+                if (!item.trackName || !item.artistName || !item.trackId) continue;
+                const id = `itunes:${item.trackId}`;
+                if (seen.has(id)) continue;
+                seen.add(id);
+                merged.push({
+                    id,
+                    provider: 'itunes',
+                    title: item.trackName,
+                    artist: item.artistName,
+                    album: item.collectionName || '',
+                    albumArt: String(item.artworkUrl100 || '').replace('100x100bb', '600x600bb'),
+                    durationMs: item.trackTimeMillis || 0,
+                    previewUrl: item.previewUrl || '',
+                    externalUrl: item.trackViewUrl || '',
+                });
+                if (merged.length >= capped) break;
+            }
+        } catch (error) {
+            console.warn(`[OnlineMusic] iTunes search (${country}) failed:`, error.message);
+        }
+    }
+    return merged;
 }
 
 async function getSpotifyToken(config) {
@@ -295,33 +316,51 @@ async function getSpotifyToken(config) {
     return spotifyTokenCache.accessToken;
 }
 
-async function searchSpotify(query, limit = 20, config) {
+async function searchSpotify(query, limit = 50, config) {
     const token = await getSpotifyToken(config);
     if (!token) return [];
-    const response = await axios.get('https://api.spotify.com/v1/search', {
-        params: { q: query, type: 'track', limit },
-        headers: { Authorization: `Bearer ${token}`, 'User-Agent': UA },
-        timeout: 12000,
-    });
-    const items = response.data?.tracks?.items || [];
-    return items.map((item) => ({
-        id: `spotify:${item.id}`,
-        provider: 'spotify',
-        title: item.name,
-        artist: (item.artists || []).map((a) => a.name).join(' / '),
-        album: item.album?.name || '',
-        albumArt: item.album?.images?.[0]?.url || item.album?.images?.[1]?.url || '',
-        durationMs: item.duration_ms || 0,
-        previewUrl: item.preview_url || '',
-        externalUrl: item.external_urls?.spotify || '',
-    }));
+    const capped = Math.min(Math.max(Number(limit) || 50, 1), 500);
+    const seen = new Set();
+    const merged = [];
+
+    for (let offset = 0; offset < capped; offset += 50) {
+        const pageSize = Math.min(50, capped - offset);
+        // eslint-disable-next-line no-await-in-loop
+        const response = await axios.get('https://api.spotify.com/v1/search', {
+            params: { q: query, type: 'track', limit: pageSize, offset },
+            headers: { Authorization: `Bearer ${token}`, 'User-Agent': UA },
+            timeout: 12000,
+        });
+        const items = response.data?.tracks?.items || [];
+        if (!items.length) break;
+        for (const item of items) {
+            const id = `spotify:${item.id}`;
+            if (seen.has(id)) continue;
+            seen.add(id);
+            merged.push({
+                id,
+                provider: 'spotify',
+                title: item.name,
+                artist: (item.artists || []).map((a) => a.name).join(' / '),
+                album: item.album?.name || '',
+                albumArt: item.album?.images?.[0]?.url || item.album?.images?.[1]?.url || '',
+                durationMs: item.duration_ms || 0,
+                previewUrl: item.preview_url || '',
+                externalUrl: item.external_urls?.spotify || '',
+            });
+        }
+        const total = Number(response.data?.tracks?.total) || 0;
+        if (offset + items.length >= total) break;
+    }
+    return merged;
 }
 
 async function searchOnline(query, options = {}) {
     const q = String(query || '').trim();
-    if (!q) return { results: [], metaSource: '' };
+    if (!q) return { results: [], metaSource: '', total: 0 };
 
-    const limit = Math.min(Number(options.limit) || 20, 40);
+    // 尽量拉全：默认 500（iTunes 单区上限 200，多区合并去重）
+    const limit = Math.min(Math.max(Number(options.limit) || 500, 1), 500);
     const config = await loadConfig();
 
     let results = [];
@@ -342,7 +381,7 @@ async function searchOnline(query, options = {}) {
         metaSource = 'itunes';
     }
 
-    return { results, metaSource };
+    return { results, metaSource, total: results.length };
 }
 
 async function searchNetEaseSongs(query, limit = 30) {
@@ -394,35 +433,44 @@ async function getNetEasePlayUrl(songId) {
         params: { id: songId, ids: `[${songId}]`, br: 320000 },
         headers: NETEASE_HEADERS,
         timeout: 12000,
+        validateStatus: () => true,
     });
     const row = response.data?.data?.[0];
-    if (row?.url) {
+    // code 200 且有 url 才可用；-110/VIP 等直接放弃，避免 outer 链落到反爬 HTML
+    if (row?.url && (row.code === 200 || row.code == null)) {
         return {
             url: String(row.url).replace(/^http:\/\//i, 'https://'),
             bitrate: row.br || 0,
             size: row.size || 0,
             source: 'netease',
             songId: String(songId),
+            mimeType: 'audio/mpeg',
         };
     }
 
-    // outer url fallback
-    const outer = await axios.get(`https://music.163.com/song/media/outer/url?id=${songId}.mp3`, {
-        headers: NETEASE_HEADERS,
-        timeout: 12000,
-        maxRedirects: 0,
-        validateStatus: (status) => status >= 200 && status < 400,
-    });
-    const location = outer.headers?.location;
-    if (location && /^https?:\/\//i.test(location)) {
-        return {
-            url: String(location).replace(/^http:\/\//i, 'https://'),
-            bitrate: 0,
-            size: 0,
-            source: 'netease',
-            songId: String(songId),
-        };
-    }
+    // outer url fallback：仅接受明确的媒体 CDN 跳转
+    try {
+        const outer = await axios.get(`https://music.163.com/song/media/outer/url?id=${songId}.mp3`, {
+            headers: NETEASE_HEADERS,
+            timeout: 12000,
+            maxRedirects: 0,
+            validateStatus: (status) => status >= 200 && status < 400,
+            proxy: false,
+        });
+        const location = outer.headers?.location;
+        if (location && /^https?:\/\//i.test(location)
+            && !/music\.163\.com\/(404|error|login)/i.test(location)
+            && /(\.mp3(\?|$)|m\d+\.music\.126\.net|jdymusic)/i.test(location)) {
+            return {
+                url: String(location).replace(/^http:\/\//i, 'https://'),
+                bitrate: 0,
+                size: 0,
+                source: 'netease',
+                songId: String(songId),
+                mimeType: 'audio/mpeg',
+            };
+        }
+    } catch (_) {}
     return null;
 }
 
@@ -824,6 +872,7 @@ async function resolveViaYouTube(track) {
 
 async function cacheResolvedMedia(resolved) {
     if (!configPath || !resolved?.url) return null;
+    const { isValidAudioFile } = require('./mp3Encoder');
     const cacheDir = path.join(path.dirname(configPath), 'online-cache');
     await fs.ensureDir(cacheDir);
 
@@ -838,9 +887,11 @@ async function cacheResolvedMedia(resolved) {
     try {
         if (await fs.pathExists(filePath)) {
             const st = await fs.stat(filePath);
-            if (st.size > 64 * 1024) {
+            if (st.size > 64 * 1024 && await isValidAudioFile(filePath)) {
                 return filePath;
             }
+            // 失效缓存（如 HTML 伪文件）删掉重下
+            await fs.remove(filePath);
         }
     } catch (_) {}
 
@@ -870,6 +921,12 @@ async function cacheResolvedMedia(resolved) {
         throw new Error(`下载音源失败 HTTP ${response.status}`);
     }
 
+    const contentType = String(response.headers['content-type'] || '').toLowerCase();
+    if (contentType.includes('text/html') || contentType.includes('application/json')) {
+        if (response.data?.destroy) response.data.destroy();
+        throw new Error(`音源返回了非音频内容 (${contentType || 'unknown'})`);
+    }
+
     await new Promise((resolve, reject) => {
         const ws = fs.createWriteStream(tmpPath);
         response.data.pipe(ws);
@@ -882,6 +939,10 @@ async function cacheResolvedMedia(resolved) {
     if (st.size < 16 * 1024) {
         try { await fs.remove(tmpPath); } catch (_) {}
         throw new Error('下载音源过小，可能失败');
+    }
+    if (!(await isValidAudioFile(tmpPath))) {
+        try { await fs.remove(tmpPath); } catch (_) {}
+        throw new Error('下载内容不是有效音频（可能被版权拦截）');
     }
     await fs.move(tmpPath, filePath, { overwrite: true });
     console.log(`[OnlineMusic] Cached ${resolved.source} -> ${filePath} (${st.size} bytes)`);
@@ -1122,6 +1183,95 @@ async function refreshOnlineTrack(track) {
     });
 }
 
+/**
+ * 解析音源并导出为 MP3 到指定路径。
+ * @param {object} meta 搜索元数据
+ * @param {string} targetPath 目标 .mp3 路径
+ * @param {{ BrowserWindow?: any }} options
+ */
+async function downloadOnlineTrackAsMp3(meta, targetPath, options = {}) {
+    if (!meta?.title) throw new Error('缺少曲目信息');
+    if (!targetPath) throw new Error('未指定保存路径');
+
+    const { convertToMp3, buildMp3Filename, isValidAudioFile } = require('./mp3Encoder');
+    let outPath = String(targetPath);
+    if (!/\.mp3$/i.test(outPath)) {
+        outPath = path.join(outPath, buildMp3Filename(meta));
+    }
+
+    // 与播放一致：B 站优先（网易常因版权返回空链/HTML）
+    let track = null;
+    let lastError = null;
+    try {
+        track = await resolveAndBuildTrack(meta);
+    } catch (error) {
+        lastError = error;
+        console.warn('[OnlineMusic] download resolve failed:', error.message);
+    }
+
+    // 若通用解析失败，再单独试网易（仅当能拿到真 MP3）
+    if (!track?.path) {
+        try {
+            const ne = await resolveViaNetEase(meta);
+            if (ne?.url) track = await toPlayableTrack(meta, ne);
+        } catch (error) {
+            lastError = error;
+            console.warn('[OnlineMusic] download netease fallback failed:', error.message);
+        }
+    }
+    if (!track?.path) {
+        throw lastError || new Error('未能解析可下载音源');
+    }
+
+    let sourcePath = track.path;
+    if (/^https?:\/\//i.test(sourcePath)) {
+        if (track.directStreamUrl) {
+            const resolved = {
+                url: track.directStreamUrl,
+                source: track.audioSource,
+                videoId: track.bilibiliBvid || track.youtubeVideoId || '',
+                songId: track.neteaseSongId || '',
+                referer: track.referer || '',
+                mimeType: track.audioSource === 'bilibili' ? 'audio/mp4' : 'audio/mpeg',
+                fetchDirect: track.audioSource !== 'youtube',
+            };
+            sourcePath = await cacheResolvedMedia(resolved);
+        } else {
+            throw new Error('音源未缓存，无法下载');
+        }
+    }
+    if (!(await fs.pathExists(sourcePath))) {
+        throw new Error('本地音源文件不存在');
+    }
+    if (!(await isValidAudioFile(sourcePath))) {
+        try { await fs.remove(sourcePath); } catch (_) {}
+        // 坏缓存后强制走 B 站重解析
+        track = await resolveAndBuildTrack(meta, { preferredAudioSource: 'bilibili' });
+        sourcePath = track.path;
+        if (/^https?:\/\//i.test(sourcePath) || !(await isValidAudioFile(sourcePath))) {
+            throw new Error('音源文件无效（版权限制或缓存损坏）');
+        }
+    }
+
+    await fs.ensureDir(path.dirname(outPath));
+    const convertResult = await convertToMp3(sourcePath, outPath, {
+        BrowserWindow: options.BrowserWindow,
+    });
+
+    try {
+        await saveConfig({ downloadDir: path.dirname(outPath) });
+    } catch (_) {}
+
+    return {
+        path: outPath,
+        title: track.title || meta.title,
+        artist: track.artist || meta.artist,
+        audioSource: track.audioSource,
+        convertMethod: convertResult?.method || '',
+        size: (await fs.stat(outPath)).size,
+    };
+}
+
 module.exports = {
     init,
     loadConfig,
@@ -1129,4 +1279,5 @@ module.exports = {
     searchOnline,
     resolveAndBuildTrack,
     refreshOnlineTrack,
+    downloadOnlineTrackAsMp3,
 };

@@ -23,6 +23,7 @@ const COPY_MODULE_FILES = [
     'modules/ipc/ipcContracts.js',
     'modules/lyricFetcher.js',
     'modules/onlineMusicClient.js',
+    'modules/mp3Encoder.js',
     'modules/webdavManager.js',
     'modules/musicScannerWorker.js',
     'modules/services/preloadPaths.js',
@@ -82,6 +83,7 @@ async function main() {
         dependencies: {
             axios: '^1.10.0',
             'fs-extra': '^11.3.2',
+            lamejs: '^1.2.1',
             'music-metadata': '^11.4.0',
             'node-fetch': '^3.3.2',
         },

@@ -535,6 +535,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         app.sidebarTabs.forEach(tab => tab.onclick = () => {
+            app.leaveOnlineSearchMode?.();
             app.sidebarTabs.forEach(t => t.classList.remove('active')); tab.classList.add('active');
             app.renderSidebarContent(tab.dataset.view);
         });
@@ -612,8 +613,17 @@ document.addEventListener('DOMContentLoaded', () => {
         app.semanticSearchBtn.onclick = () => {
             app.isSemanticSearchActive = !app.isSemanticSearchActive;
             if (app.isSemanticSearchActive) {
-                app.isOnlineSearchActive = false;
-                app.updateOnlineSearchUi?.();
+                if (app.isOnlineSearchActive) {
+                    app.isOnlineSearchActive = false;
+                    app.updateOnlineSearchUi?.();
+                    app.onlineSearchResults = [];
+                    app.onlineMetaSource = '';
+                    app.onlineResultPage = 0;
+                    app.onlineResolvingKey = '';
+                    app.onlinePlayingKey = '';
+                } else {
+                    app.updateOnlineSearchUi?.();
+                }
             }
             app.semanticSearchBtn.classList.toggle('active', app.isSemanticSearchActive);
             app.searchInput.placeholder = app.isSemanticSearchActive
