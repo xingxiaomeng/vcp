@@ -31,9 +31,16 @@ function setupLyrics(app) {
         }
 
         const title = app.stripAudioExtension(track.title) || track.title;
-        const artist = track.artist || '';
+        let artist = track.artist || '';
+        if (/^(未知艺术家|unknown(\s*artist)?)$/i.test(String(artist).trim())) {
+            artist = '';
+        }
         const isLocal = typeof app.isLocalTrack === 'function' ? app.isLocalTrack(track) : false;
         const cacheKey = isLocal ? app.normalizePathForCompare(track.path) : '';
+        const duration = Number(track.duration)
+            || Number(app.lastKnownDuration)
+            || Number(app.phantomAudio?.duration)
+            || 0;
 
         // 已知无歌词的本地曲：直接提示，不重复检索（不阻塞播放）
         if (cacheKey && app._localLyricsMissCache.has(cacheKey)) {
@@ -76,7 +83,12 @@ function setupLyrics(app) {
             : '<li class="no-lyrics">正在网络上搜索歌词...</li>';
 
         try {
-            const fetchedLrc = await app.api.fetchMusicLyrics({ artist, title });
+            const fetchedLrc = await app.api.fetchMusicLyrics({
+                artist,
+                title,
+                duration: duration > 0 ? duration : undefined,
+                album: track.album || undefined,
+            });
             if (requestToken !== app.lyricsRequestToken) return;
 
             if (fetchedLrc) {

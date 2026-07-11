@@ -814,13 +814,16 @@ function initialize(options) {
             return null;
         });
 
-        ipcMain.handle('music-fetch-lyrics', async (event, { artist, title, localOnly }) => {
+        ipcMain.handle('music-fetch-lyrics', async (event, { artist, title, localOnly, duration, durationMs, album }) => {
             if (!title || localOnly) return null;
             console.log(`[Music] IPC: Received request to fetch lyrics for "${title}" by "${artist}"`);
             try {
-                // Ensure the lyric directory exists before fetching
                 await fs.ensureDir(LYRIC_DIR);
-                const lrcContent = await lyricFetcher.fetchAndSaveLyrics(artist, title, LYRIC_DIR);
+                const lrcContent = await lyricFetcher.fetchAndSaveLyrics(artist, title, LYRIC_DIR, {
+                    duration,
+                    durationMs,
+                    album,
+                });
                 return lrcContent;
             } catch (error) {
                 console.error(`[Music] Error fetching lyrics via IPC for "${title}":`, error);
