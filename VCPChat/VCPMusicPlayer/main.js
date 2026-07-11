@@ -11,16 +11,34 @@ const isPackaged = app.isPackaged;
 // Dev: main.js lives in VCPMusicPlayer/, shared code is in the parent VCPChat/.
 const APP_ROOT = isPackaged ? __dirname : path.join(__dirname, '..');
 
-const PORTABLE_ROOT = isPackaged
-    ? path.dirname(process.execPath)
-    : path.join(__dirname, '..');
+// electron-builder portable 会解压到 %TEMP%，process.execPath 指向临时目录。
+// 必须用 PORTABLE_EXECUTABLE_DIR（用户双击的 exe 所在目录）持久化数据。
+function resolvePortableRoot() {
+    if (!isPackaged) return path.join(__dirname, '..');
+    const fromEnv = String(process.env.PORTABLE_EXECUTABLE_DIR || '').trim();
+    if (fromEnv) return fromEnv;
+    // 非 portable 包（如 win-unpacked）仍用 exe 旁目录
+    return path.dirname(process.execPath);
+}
 
+const PORTABLE_ROOT = resolvePortableRoot();
 const APP_DATA_ROOT = path.join(PORTABLE_ROOT, 'AppData');
 const SETTINGS_FILE = path.join(APP_DATA_ROOT, 'settings.json');
 const AUDIO_ENGINE_DIR = path.join(APP_ROOT, 'audio_engine');
 
+// 在 app ready 之前把 Electron userData 也钉到便携目录，避免写到 %APPDATA%
+try {
+    app.setPath('userData', path.join(APP_DATA_ROOT, 'Electron'));
+} catch (error) {
+    console.warn('[VCPMusicPlayer] setPath(userData) failed:', error.message);
+}
+
 process.env.VCP_DATA_PATH = APP_DATA_ROOT;
-process.env.VCP_APP_DATA = path.join(AUDIO_ENGINE_DIR, 'AppData');
+// 音频引擎状态同样落到便携 AppData，避免随临时解压目录丢失
+process.env.VCP_APP_DATA = path.join(APP_DATA_ROOT, 'AudioEngine');
+
+console.log(`[VCPMusicPlayer] Portable root: ${PORTABLE_ROOT}`);
+console.log(`[VCPMusicPlayer] AppData: ${APP_DATA_ROOT}`);
 
 let audioEngineProcess = null;
 let audioEngineStopPromise = null;
@@ -206,7 +224,9 @@ async function bootstrap() {
     await fs.ensureDir(APP_DATA_ROOT);
     await fs.ensureDir(path.join(APP_DATA_ROOT, 'MusicCoverCache'));
     await fs.ensureDir(path.join(APP_DATA_ROOT, 'lyric'));
+    await fs.ensureDir(path.join(APP_DATA_ROOT, 'online-cache'));
     await fs.ensureDir(process.env.VCP_APP_DATA);
+    await fs.ensureDir(app.getPath('userData'));
 
     registerMinimalIpc();
     windowHandlers.initialize(null, openChildWindows);
