@@ -104,8 +104,11 @@ fn validate_path(path: &str) -> Result<String, String> {
             return Err("Invalid URL: path traversal characters not allowed".into());
         }
         // SSRF protection: reject private/link-local IP ranges
+        // Exception: local online-stream reverse proxy (YouTube via system proxy)
         if let Some(host) = extract_host(path) {
-            if is_private_host(&host) {
+            let allow_local_online_stream = (host == "127.0.0.1" || host == "localhost")
+                && path.contains("/online-stream");
+            if is_private_host(&host) && !allow_local_online_stream {
                 return Err(format!("URL host '{}' is not allowed (private/internal address)", host));
             }
         }

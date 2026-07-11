@@ -86,7 +86,11 @@ function setupPlayer(app) {
         }
 
         app.currentTrackIndex = trackIndex;
-        const track = app.playlist[trackIndex];
+        let track = app.playlist[trackIndex];
+        if (!track) {
+            console.error('[Music.js] Invalid track index:', trackIndex);
+            return;
+        }
         app.pendingTrackPath = track.path;
         app.isTrackLoading = true;
         const switchingLocalToLocal = app.isLocalTrack(track) && app.useLocalAudioFallback;
@@ -94,122 +98,223 @@ function setupPlayer(app) {
             app.deactivateLocalAudioFallback?.();
         }
 
-        app.trackTitle.textContent = app.stripAudioExtension(track.title) || '未知标题';
-        app.trackArtist.textContent = track.artist || '未知艺术家';
-        app.trackBitrate.textContent = track.bitrate ? `${Math.round(track.bitrate / 1000)} kbps` : '';
+        try {
+            // 在线曲目：仅在需要播放或本地缓存缺失时刷新（避免启动时卡住播放键）
+            const needsOnlineRefresh = track.source === 'online' && app.api?.refreshOnlineMusicTrack && (
+                andPlay
+                || track.cachedLocally !== true
+                || !track.path
+                || /^https?:\/\//i.test(String(track.path))
+            );
+            if (needsOnlineRefresh) {
+                try {
+                    const refreshed = await app.api.refreshOnlineMusicTrack(track);
+                    if (requestId !== app.pendingLoadRequestId) return;
+                    if (refreshed?.status === 'success' && refreshed.track?.path) {
+                        track = { ...track, ...refreshed.track };
+                        app.playlist[trackIndex] = track;
+                        app.pendingTrackPath = track.path;
+                    }
+                } catch (error) {
+                    console.warn('[Music.js] Online track refresh failed:', error?.message || error);
+                }
+            }
 
-        const defaultArtUrl = `url('../assets/${app.currentTheme === 'light' ? 'musiclight.jpeg' : 'musicdark.jpeg'}')`;
-        if (track.albumArt) {
-            const albumArtUrl = `url('file://${track.albumArt.replace(/\\/g, '/')}')`;
-            app.albumArt.style.backgroundImage = albumArtUrl;
-            app.updateBlurredBackground(albumArtUrl);
-        } else {
-            app.albumArt.style.backgroundImage = defaultArtUrl;
-            app.updateBlurredBackground('none');
-        }
+            app.trackTitle.textContent = app.stripAudioExtension(track.title) || '未知标题';
+            app.trackArtist.textContent = track.artist || '未知艺术家';
+            app.trackBitrate.textContent = track.bitrate ? `${Math.round(track.bitrate / 1000)} kbps` : '';
 
-        app.renderPlaylist(app.currentFilteredTracks);
-        app.fetchAndDisplayLyricsForTrack(track);
-        app.updateMediaSessionMetadata();
-        if (app.wnpAdapter) app.wnpAdapter.sendUpdate();
+            const defaultArtUrl = `url('../assets/${app.currentTheme === 'light' ? 'musiclight.jpeg' : 'musicdark.jpeg'}')`;
+            if (track.albumArt) {
+                const art = String(track.albumArt);
+                const albumArtUrl = app.getAlbumArtCssUrl?.(art)
+                    || (/^https?:\/\//i.test(art)
+                        ? `url('${art.replace(/'/g, '%27')}')`
+                        : `url('file://${art.replace(/\\/g, '/')}')`);
+                app.albumArt.style.backgroundImage = albumArtUrl;
+                app.updateBlurredBackground(albumArtUrl);
+            } else {
+                app.albumArt.style.backgroundImage = defaultArtUrl;
+                app.updateBlurredBackground('none');
+            }
 
-        if (app.isLocalTrack(track)) {
-            app.stopStatePolling?.();
-            app.api?.musicPause?.().catch(() => {});
+            app.renderPlaylist(app.currentFilteredTracks);
+            app.fetchAndDisplayLyricsForTrack(track);
+            app.updateMediaSessionMetadata();
+            if (app.wnpAdapter) app.wnpAdapter.sendUpdate();
+
+            if (app.isLocalTrack(track)) {
+                app.stopStatePolling?.();
+                app.api?.musicPause?.().catch(() => {});
+                app.useLocalAudioFallback = false;
+                app.bindFallbackAudioEvents();
+                const localReady = await app.loadLocalTrackFast(track, andPlay, requestId);
+                if (requestId !== app.pendingLoadRequestId) return;
+                if (localReady) return;
+
+                console.warn('[Music.js] Local fast path failed, falling back to Rust engine:', track.path);
+            }
+
+            // 在线曲目：本地缓存文件走 HTML5；反代流也优先 HTML5（Rust 解不了 B 站 fMP4）
+            if (track.source === 'online') {
+                const pathText = String(track.path || '');
+                const isCachedFile = track.cachedLocally || !/^https?:\/\//i.test(pathText);
+                const isProxy = /^https?:\/\/127\.0\.0\.1(?::\d+)?\/online-stream\//i.test(pathText);
+                if (isCachedFile || isProxy) {
+                    app.stopStatePolling?.();
+                    app.api?.musicPause?.().catch(() => {});
+                    app.useLocalAudioFallback = false;
+                    app.bindFallbackAudioEvents();
+                    const onlineReady = await app.loadLocalTrackFast(track, andPlay, requestId);
+                    if (requestId !== app.pendingLoadRequestId) return;
+                    if (onlineReady) return;
+                    console.warn('[Music.js] Online HTML5 path failed, falling back to Rust engine:', track.path);
+                }
+            }
+
+            try {
+                await app.api?.cancelMusicPreload?.();
+            } catch (e) {}
+
             app.useLocalAudioFallback = false;
             app.bindFallbackAudioEvents();
-            const localReady = await app.loadLocalTrackFast(track, andPlay, requestId);
+
+            const result = await app.api.musicLoad(track);
             if (requestId !== app.pendingLoadRequestId) return;
-            if (localReady) return;
 
-            console.warn('[Music.js] Local fast path failed, falling back to Rust engine:', track.path);
-        }
-
-        try {
-            await app.api?.cancelMusicPreload?.();
-        } catch (e) {}
-
-        app.useLocalAudioFallback = false;
-        app.bindFallbackAudioEvents();
-
-        const result = await app.api.musicLoad(track);
-        if (requestId !== app.pendingLoadRequestId) return;
-
-        if (result && result.status === 'success') {
-            app.updateUIWithState(result.state);
-
-            const ready = await app.waitForEngineTrackReady(track, requestId);
-            if (requestId !== app.pendingLoadRequestId) return;
-            app.isTrackLoading = false;
-            if (ready === true) {
-                let finalState;
-                try {
-                    finalState = await app.api.getMusicState();
-                } catch (_) {
-                    finalState = null;
+            if (result && result.status === 'success') {
+                if (result.track?.path) {
+                    track = { ...track, ...result.track };
+                    app.playlist[trackIndex] = track;
+                    app.pendingTrackPath = track.path;
                 }
-                const decodedDuration = finalState?.state?.duration ?? 0;
-                if (decodedDuration <= 0) {
-                    const ok = await app.tryLocalFallbackPlayback(
-                        track,
-                        andPlay,
-                        '引擎未能解码此文件（可能为特殊封装格式）'
-                    );
+                app.updateUIWithState(result.state);
+
+                const ready = await app.waitForEngineTrackReady(track, requestId);
+                if (requestId !== app.pendingLoadRequestId) return;
+                if (ready === true) {
+                    let finalState;
+                    try {
+                        finalState = await app.api.getMusicState();
+                    } catch (_) {
+                        finalState = null;
+                    }
+                    const decodedDuration = finalState?.state?.duration ?? 0;
+                    if (decodedDuration <= 0) {
+                        const ok = await app.tryLocalFallbackPlayback(
+                            track,
+                            andPlay,
+                            '引擎未能解码此文件（可能为特殊封装格式）'
+                        );
+                        if (!ok && andPlay) {
+                            app.trackArtist.textContent = '加载失败 — 请确认文件存在且格式受支持';
+                        }
+                        return;
+                    }
+                    app.useLocalAudioFallback = false;
+                    if (andPlay) await app.playTrack({ allowReload: false });
+                } else {
+                    const fallbackReason = ready === 'engine_down'
+                        ? '音频引擎崩溃或未响应'
+                        : 'Rust 引擎加载失败';
+                    const ok = await app.tryLocalFallbackPlayback(track, andPlay, fallbackReason);
                     if (!ok && andPlay) {
+                        console.error('[Music.js] Track not ready for playback:', track.title, track.path);
                         app.trackArtist.textContent = '加载失败 — 请确认文件存在且格式受支持';
                     }
-                    return;
                 }
-                app.useLocalAudioFallback = false;
-                if (andPlay) app.playTrack();
             } else {
-                const fallbackReason = ready === 'engine_down'
-                    ? '音频引擎崩溃或未响应'
-                    : 'Rust 引擎加载失败';
-                const ok = await app.tryLocalFallbackPlayback(track, andPlay, fallbackReason);
+                console.error('Failed to load track:', result?.message);
+                const ok = await app.tryLocalFallbackPlayback(
+                    track,
+                    andPlay,
+                    result?.message || 'engine load failed'
+                );
                 if (!ok && andPlay) {
-                    console.error('[Music.js] Track not ready for playback:', track.title, track.path);
                     app.trackArtist.textContent = '加载失败 — 请确认文件存在且格式受支持';
                 }
             }
-        } else {
-            if (requestId === app.pendingLoadRequestId) app.isTrackLoading = false;
-            console.error('Failed to load track:', result?.message);
-            const ok = await app.tryLocalFallbackPlayback(
-                track,
-                andPlay,
-                result?.message || 'engine load failed'
-            );
-            if (!ok && andPlay) {
-                app.trackArtist.textContent = '加载失败 — 请确认文件存在且格式受支持';
+        } catch (error) {
+            console.error('[Music.js] loadTrack failed:', error);
+            if (andPlay) {
+                app.trackArtist.textContent = `加载失败 — ${error.message || '未知错误'}`;
+            }
+        } finally {
+            if (requestId === app.pendingLoadRequestId) {
+                app.isTrackLoading = false;
             }
         }
     };
 
-    app.playTrack = async () => {
-        if (app.playlist.length === 0 || app.isTrackLoading) return;
-        if (app.useLocalAudioFallback) {
-            try {
-                await app.playTrackLocal();
-            } catch (error) {
-                console.error('Local fallback play failed:', error);
-            }
+    app.playTrack = async (options = {}) => {
+        const allowReload = options.allowReload !== false;
+        if (app.playlist.length === 0) {
+            if (app.trackArtist) app.trackArtist.textContent = '播放列表为空';
             return;
         }
-        const result = await app.api.musicPlay();
-        if (result.status === 'success') {
-            app.isChangingState = true;
-            app.lastCommandTime = Date.now();
-            app.expectedPlayingState = true;
-            app.isPlaying = true;
-            document.body.classList.add('music-playing');
-            app.playPauseBtn.classList.add('is-playing');
-            app.phantomAudio.loop = true;
-            app.phantomAudio.play().catch(e => console.error("Phantom audio play failed:", e));
 
-            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
-            app.startStatePolling();
-            if (app.wnpAdapter) app.wnpAdapter.sendUpdate();
+        const idx = Number.isInteger(app.currentTrackIndex) ? app.currentTrackIndex : 0;
+        const track = app.playlist[idx];
+        if (!track) {
+            if (allowReload) await app.loadTrack(0, true);
+            return;
+        }
+
+        // 加载卡住时不再静默忽略，改为重新加载并播放
+        if (app.isTrackLoading) {
+            console.warn('[Music.js] Play while loading — retry loadTrack');
+            app.isTrackLoading = false;
+            if (allowReload) await app.loadTrack(idx, true);
+            return;
+        }
+
+        const src = String(app.phantomAudio?.src || '');
+        const hasHtml5Src = Boolean(src)
+            && !src.startsWith('data:')
+            && !src.startsWith('about:')
+            && src !== window.location.href;
+
+        if (app.useLocalAudioFallback || hasHtml5Src) {
+            app.useLocalAudioFallback = true;
+            try {
+                await app.playTrackLocal();
+                return;
+            } catch (error) {
+                console.error('Local fallback play failed:', error);
+                app.useLocalAudioFallback = false;
+                if (allowReload) {
+                    await app.loadTrack(idx, true);
+                    return;
+                }
+            }
+        }
+
+        try {
+            const result = await app.api.musicPlay();
+            if (result?.status === 'success') {
+                app.isChangingState = true;
+                app.lastCommandTime = Date.now();
+                app.expectedPlayingState = true;
+                app.isPlaying = true;
+                document.body.classList.add('music-playing');
+                app.playPauseBtn.classList.add('is-playing');
+                app.phantomAudio.loop = true;
+                if (!hasHtml5Src) {
+                    app.phantomAudio.play().catch((e) => console.error('Phantom audio play failed:', e));
+                }
+
+                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+                app.startStatePolling();
+                if (app.wnpAdapter) app.wnpAdapter.sendUpdate();
+                return;
+            }
+
+            console.warn('[Music.js] musicPlay failed, reloading track:', result?.message);
+            if (allowReload) await app.loadTrack(idx, true);
+            else if (app.trackArtist) app.trackArtist.textContent = result?.message || '无法播放';
+        } catch (error) {
+            console.error('[Music.js] playTrack failed:', error);
+            if (allowReload) await app.loadTrack(idx, true);
         }
     };
 
@@ -380,14 +485,15 @@ function setupPlayer(app) {
             
             const defaultArtUrl = `url('../assets/${app.currentTheme === 'light' ? 'musiclight.jpeg' : 'musicdark.jpeg'}')`;
             if (track.albumArt) {
-                const albumArtUrl = `url('file://${track.albumArt.replace(/\\/g, '/')}')`;
+                const albumArtUrl = app.getAlbumArtCssUrl?.(track.albumArt)
+                    || `url('file://${String(track.albumArt).replace(/\\/g, '/')}')`;
                 app.albumArt.style.backgroundImage = albumArtUrl;
                 app.updateBlurredBackground(albumArtUrl);
             } else {
                 app.albumArt.style.backgroundImage = defaultArtUrl;
                 app.updateBlurredBackground('none');
             }
-            
+
             app.renderPlaylist(app.currentFilteredTracks);
             app.fetchAndDisplayLyricsForTrack(track);
             app.updateMediaSessionMetadata();
@@ -427,7 +533,8 @@ function setupPlayer(app) {
                     
                     const defaultArtUrl = `url('../assets/${app.currentTheme === 'light' ? 'musiclight.jpeg' : 'musicdark.jpeg'}')`;
                     if (track.albumArt) {
-                        const albumArtUrl = `url('file://${track.albumArt.replace(/\\/g, '/')}')`;
+                        const albumArtUrl = app.getAlbumArtCssUrl?.(track.albumArt)
+                            || `url('file://${String(track.albumArt).replace(/\\/g, '/')}')`;
                         app.albumArt.style.backgroundImage = albumArtUrl;
                         app.updateBlurredBackground(albumArtUrl);
                     } else {

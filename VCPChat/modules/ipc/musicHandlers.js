@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const { Worker } = require('worker_threads');
 const lyricFetcher = require('../lyricFetcher'); // Import the new lyric fetcher
+const onlineMusicClient = require('../onlineMusicClient');
 const webdavManager = require('../webdavManager'); // WebDAV support
 const windowService = require('../services/windowService');
 const WINDOW_APP_IDS = require('../services/windowAppIds');
@@ -321,6 +322,7 @@ function initialize(options) {
     MUSIC_PLAYLIST_FILE = path.join(APP_DATA_ROOT_IN_PROJECT, 'songlist.json');
     MUSIC_COVER_CACHE_DIR = path.join(APP_DATA_ROOT_IN_PROJECT, 'MusicCoverCache');
     LYRIC_DIR = path.join(APP_DATA_ROOT_IN_PROJECT, 'lyric');
+    onlineMusicClient.init(APP_DATA_ROOT_IN_PROJECT);
 
     if (ipcHandlersRegistered) {
         console.log('[Music] IPC handlers already registered, skipping duplicate registration.');
@@ -355,32 +357,45 @@ function initialize(options) {
                     return { status: 'error', message: `音频引擎未就绪: ${error.message}` };
                 }
             }
-            if (track && track.path) {
+            if (track && (track.path || track.source === 'online')) {
+                let playTrack = track;
+                if (track.source === 'online') {
+                    try {
+                        playTrack = await onlineMusicClient.refreshOnlineTrack(track);
+                    } catch (error) {
+                        return { status: 'error', message: `在线音源解析失败: ${error.message}` };
+                    }
+                }
+
                 currentSongInfo = {
-                    title: track.title || '未知标题',
-                    artist: track.artist || '未知艺术家',
-                    album: track.album || '未知专辑'
+                    title: playTrack.title || '未知标题',
+                    artist: playTrack.artist || '未知艺术家',
+                    album: playTrack.album || '未知专辑'
                 };
+
+                if (!playTrack.path) {
+                    return { status: 'error', message: 'Invalid track data provided.' };
+                }
                 
                 // 检查是否是 WebDAV 远程曲目
-                if (track.isRemote || track.path.startsWith('http://') || track.path.startsWith('https://')) {
+                if (playTrack.isRemote || playTrack.path.startsWith('http://') || playTrack.path.startsWith('https://')) {
                     // 如果有 serverId，使用它获取凭据
-                    if (track.serverId) {
+                    if (playTrack.serverId) {
                         return await webdavManager.configureAndLoad({
-                            url: track.path,
-                            serverId: track.serverId
+                            url: playTrack.path,
+                            serverId: playTrack.serverId
                         });
                     }
                     // 否则尝试通过 URL 匹配服务器
-                    const path = track.path;
+                    const pathUrl = playTrack.path;
                     const matchingServer = webdavManager.listServers().find(s => {
-                        return path.startsWith(s.url);
+                        return pathUrl.startsWith(s.url);
                     });
                     if (matchingServer) {
                         const creds = webdavManager.getServerCredentials(matchingServer.id);
                         if (creds) {
                             return await webdavManager.configureAndLoad({
-                                url: track.path,
+                                url: playTrack.path,
                                 username: creds.username,
                                 password: creds.password
                             });
@@ -388,10 +403,51 @@ function initialize(options) {
                     }
                 }
                 
-                // 本地文件或无法匹配的远程文件
-                return audioEngineApi('/load', 'POST', { path: track.path });
+                // 本地文件、在线代理流或无法匹配的远程文件
+                const loadResult = await audioEngineApi('/load', 'POST', { path: playTrack.path });
+                if (track.source === 'online' && loadResult && typeof loadResult === 'object') {
+                    loadResult.track = playTrack;
+                }
+                return loadResult;
             }
             return { status: 'error', message: 'Invalid track data provided.' };
+        });
+
+        ipcMain.handle('music-search-online', async (event, { query, limit } = {}) => {
+            try {
+                return await onlineMusicClient.searchOnline(query, { limit });
+            } catch (error) {
+                console.error('[Music] Online search failed:', error);
+                return { results: [], metaSource: '', error: error.message };
+            }
+        });
+
+        ipcMain.handle('music-resolve-online-track', async (event, meta) => {
+            try {
+                const track = await onlineMusicClient.resolveAndBuildTrack(meta || {});
+                return { status: 'success', track };
+            } catch (error) {
+                console.error('[Music] Online resolve failed:', error);
+                return { status: 'error', message: error.message };
+            }
+        });
+
+        ipcMain.handle('music-refresh-online-track', async (event, track) => {
+            try {
+                const refreshed = await onlineMusicClient.refreshOnlineTrack(track || {});
+                return { status: 'success', track: refreshed };
+            } catch (error) {
+                console.error('[Music] Online refresh failed:', error);
+                return { status: 'error', message: error.message };
+            }
+        });
+
+        ipcMain.handle('music-get-online-config', async () => {
+            return onlineMusicClient.loadConfig();
+        });
+
+        ipcMain.handle('music-save-online-config', async (event, config) => {
+            return onlineMusicClient.saveConfig(config || {});
         });
 
         ipcMain.handle('music-play', async () => {

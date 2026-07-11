@@ -21,6 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
         playlistEl: document.getElementById('playlist'),
         addFolderBtn: document.getElementById('add-folder-btn'),
         searchInput: document.getElementById('search-input'),
+        onlineSearchBtn: document.getElementById('online-search-btn'),
         loadingIndicator: document.getElementById('loading-indicator'),
         scanProgressContainer: document.querySelector('.scan-progress-container'),
         scanProgressBar: document.querySelector('.scan-progress-bar'),
@@ -236,6 +237,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setupOutput(app);
         setupEffects(app);
         setupWebDav(app);
+        setupOnlineSearch(app);
         setupSidebar(app);
         setupUI(app);
 
@@ -587,26 +589,38 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         app.searchInput.oninput = (e) => {
-            if (app.isSemanticSearchActive) return; // 语义搜索模式下不进行实时过滤
+            if (app.isSemanticSearchActive || app.isOnlineSearchActive) return;
             const query = e.target.value.toLowerCase();
             app.currentFilteredTracks = query ? app.playlist.filter(t => (t.title || '').toLowerCase().includes(query) || (t.artist || '').toLowerCase().includes(query)) : null;
             app.renderPlaylist(app.currentFilteredTracks);
         };
 
         app.searchInput.onkeydown = (e) => {
-            if (e.key === 'Enter' && app.isSemanticSearchActive) {
-                const query = app.searchInput.value.trim();
-                if (query) app.performSemanticSearch(query);
+            if (e.key !== 'Enter') return;
+            const query = app.searchInput.value.trim();
+            if (!query) return;
+            if (app.isOnlineSearchActive) {
+                e.preventDefault();
+                app.performOnlineSearch(query);
+                return;
+            }
+            if (app.isSemanticSearchActive) {
+                app.performSemanticSearch(query);
             }
         };
 
         app.semanticSearchBtn.onclick = () => {
             app.isSemanticSearchActive = !app.isSemanticSearchActive;
+            if (app.isSemanticSearchActive) {
+                app.isOnlineSearchActive = false;
+                app.updateOnlineSearchUi?.();
+            }
             app.semanticSearchBtn.classList.toggle('active', app.isSemanticSearchActive);
-            app.searchInput.placeholder = app.isSemanticSearchActive ? "输入描述进行语义搜索..." : "搜索歌曲...";
+            app.searchInput.placeholder = app.isSemanticSearchActive
+                ? "输入描述进行语义搜索..."
+                : (app.isOnlineSearchActive ? "联网搜索歌曲，例如：周杰伦 新歌" : "搜索歌曲...");
             
-            if (!app.isSemanticSearchActive) {
-                // 退出语义搜索时恢复普通搜索
+            if (!app.isSemanticSearchActive && !app.isOnlineSearchActive) {
                 const query = app.searchInput.value.toLowerCase();
                 app.currentFilteredTracks = query ? app.playlist.filter(t => (t.title || '').toLowerCase().includes(query) || (t.artist || '').toLowerCase().includes(query)) : null;
                 app.renderPlaylist(app.currentFilteredTracks);

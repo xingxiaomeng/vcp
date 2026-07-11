@@ -47,30 +47,35 @@ function setupLocalFallback(app) {
             app.pendingTrackPath = track.path;
             app.phantomAudio.pause();
             app.phantomAudio.loop = false;
-            app.phantomAudio.src = app.pathToFileUrl(track.path);
+            // 在线本地代理流直接用 http URL；本地文件转 file://
+            app.phantomAudio.src = /^https?:\/\//i.test(track.path)
+                ? track.path
+                : app.pathToFileUrl(track.path);
             app.phantomAudio.volume = Number.parseFloat(app.volumeSlider?.value ?? '1');
             app.phantomAudio.load();
         }
     };
 
-    app.waitForFallbackMetadata = (timeoutMs = 2500) => new Promise((resolve) => {
+    app.waitForFallbackMetadata = (timeoutMs = 2500, options = {}) => new Promise((resolve) => {
         const audio = app.phantomAudio;
         if (!audio) {
             resolve(false);
             return;
         }
 
+        const acceptWithoutDuration = Boolean(options.acceptWithoutDuration);
         const hasDuration = () => Number.isFinite(audio.duration) && audio.duration > 0;
+        const isReady = () => hasDuration() || (acceptWithoutDuration && audio.readyState >= 2);
 
-        if (hasDuration()) {
-            app.syncFallbackProgress();
+        if (isReady()) {
+            if (hasDuration()) app.syncFallbackProgress();
             resolve(true);
             return;
         }
 
         const finish = (ok) => {
             cleanup();
-            if (ok) app.syncFallbackProgress();
+            if (ok && hasDuration()) app.syncFallbackProgress();
             resolve(ok);
         };
 
@@ -81,9 +86,9 @@ function setupLocalFallback(app) {
             audio.removeEventListener('error', onError);
         };
 
-        const onReady = () => finish(hasDuration());
+        const onReady = () => finish(isReady());
         const onError = () => finish(false);
-        const timer = setTimeout(() => finish(hasDuration()), timeoutMs);
+        const timer = setTimeout(() => finish(isReady()), timeoutMs);
 
         audio.addEventListener('loadedmetadata', onReady);
         audio.addEventListener('canplay', onReady);
@@ -93,15 +98,31 @@ function setupLocalFallback(app) {
     app.loadLocalTrackFast = async (track, andPlay, requestId) => {
         if (!track?.path) return false;
 
+        const isOnlineStream = track.source === 'online'
+            && /^https?:\/\/127\.0\.0\.1(?::\d+)?\/online-stream\//i.test(String(track.path));
+
         app.enableLocalAudioFallback(track, null, { keepLoadingState: true });
         app.bindFallbackAudioEvents();
 
-        const ready = await app.waitForFallbackMetadata(2500);
+        const ready = await app.waitForFallbackMetadata(
+            isOnlineStream ? 8000 : 2500,
+            { acceptWithoutDuration: isOnlineStream }
+        );
         if (requestId !== app.pendingLoadRequestId) return false;
 
         if (!ready) {
             app.useLocalAudioFallback = false;
             return false;
+        }
+
+        // 在线 fMP4 可能拿不到 duration，用曲目元数据兜底
+        if (isOnlineStream) {
+            const metaDur = Number(track.durationMs || 0) / 1000 || Number(track.duration || 0);
+            if ((!Number.isFinite(app.phantomAudio.duration) || app.phantomAudio.duration <= 0) && metaDur > 0) {
+                app.fallbackDuration = metaDur;
+                app.lastKnownDuration = metaDur;
+                if (app.durationEl) app.durationEl.textContent = app.formatTime(metaDur);
+            }
         }
 
         app.isTrackLoading = false;
@@ -205,12 +226,16 @@ function setupLocalFallback(app) {
     };
 
     app.tryLocalFallbackPlayback = async (track, andPlay, reason) => {
-        if (!track?.path || track.isRemote || /^https?:\/\//i.test(track.path)) {
+        const pathText = String(track?.path || '');
+        const isOnlineLocalProxy = track?.source === 'online'
+            && /^https?:\/\/127\.0\.0\.1(?::\d+)?\/online-stream\//i.test(pathText);
+        if (!pathText) return false;
+        if (!isOnlineLocalProxy && (track.isRemote || /^https?:\/\//i.test(pathText))) {
             return false;
         }
         app.enableLocalAudioFallback(track, reason);
         app.bindFallbackAudioEvents();
-        await app.waitForFallbackMetadata(2500);
+        await app.waitForFallbackMetadata(isOnlineLocalProxy ? 8000 : 2500);
         if (andPlay) {
             try {
                 await app.playTrackLocal();

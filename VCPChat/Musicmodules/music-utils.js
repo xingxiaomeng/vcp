@@ -36,8 +36,27 @@ function setupUtils(app) {
         return Boolean(a && b && a === b);
     };
 
+    app.getAlbumArtCssUrl = (albumArt) => {
+        const art = String(albumArt || '').trim();
+        if (!art) return '';
+        if (/^https?:\/\//i.test(art)) return `url('${art.replace(/'/g, '%27')}')`;
+        if (art.startsWith('file://')) return `url('${art.replace(/'/g, '%27')}')`;
+        return `url('file://${art.replace(/\\/g, '/').replace(/'/g, '%27')}')`;
+    };
+
+    app.getAlbumArtSrc = (albumArt) => {
+        const art = String(albumArt || '').trim();
+        if (!art) return '';
+        if (/^https?:\/\//i.test(art) || art.startsWith('file://')) return art;
+        return `file://${art.replace(/\\/g, '/')}`;
+    };
+
     app.isLocalTrack = (track) => {
         if (!track?.path) return false;
+        // 在线曲目已缓存到本地文件时，按本地轨处理（走 HTML5）
+        if (track.cachedLocally || (track.source === 'online' && !/^https?:\/\//i.test(String(track.path)))) {
+            return true;
+        }
         if (track.isRemote) return false;
         return !/^https?:\/\//i.test(String(track.path));
     };

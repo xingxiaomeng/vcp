@@ -22,6 +22,7 @@ const COPY_MODULE_FILES = [
     'modules/ipc/themeHandlers.js',
     'modules/ipc/ipcContracts.js',
     'modules/lyricFetcher.js',
+    'modules/onlineMusicClient.js',
     'modules/webdavManager.js',
     'modules/musicScannerWorker.js',
     'modules/services/preloadPaths.js',
